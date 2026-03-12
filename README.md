@@ -105,6 +105,19 @@ bun run lint               # Lint with Biome
 bun run typecheck          # TypeScript strict check
 ```
 
+## Roadmap
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 0 | Repository foundation — monorepo, CI, tooling | ✅ Done |
+| 1 | Slack Gateway — receive & log events | ✅ Done |
+| 2 | Tool registry & executors | Planned |
+| 3 | Memory & knowledge persistence | Planned |
+| 4 | GitHub integration | Planned |
+| 5 | Linear integration | Planned |
+| 6 | Heartbeat & proactive monitoring | Planned |
+| 7 | Admin dashboard | Planned |
+
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
