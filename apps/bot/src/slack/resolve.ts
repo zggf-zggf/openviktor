@@ -60,5 +60,5 @@ function escapeRegExp(str: string): string {
 }
 
 export function stripBotMention(text: string, botUserId: string): string {
-	return text.replace(new RegExp(`<@${escapeRegExp(botUserId)}>\\s*`, "g"), "").trim();
+	return text.replace(new RegExp(`<@${escapeRegExp(botUserId)}(\\|[^>]*)?>\\s*`, "g"), "").trim();
 }

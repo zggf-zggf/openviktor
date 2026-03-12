@@ -49,7 +49,10 @@ export function registerEventHandlers(app: App, ctx: BotContext): void {
 			);
 			const userMessage = stripBotMention(rawText, botUserId);
 
-			if (!userMessage) return;
+			if (!userMessage) {
+				ctx.logger.debug({ rawText, botUserId }, "Empty message after stripping mention");
+				return;
+			}
 
 			const result = await ctx.runner.run({
 				workspaceId: workspace.id,
