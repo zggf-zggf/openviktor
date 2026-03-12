@@ -95,6 +95,36 @@ describe("withRetry", () => {
 		await expect(withRetry(fn, { maxRetries: 3, baseDelayMs: 1 })).rejects.toThrow();
 		expect(fn).toHaveBeenCalledTimes(4);
 	});
+
+	it("respects retry-after header (seconds)", async () => {
+		const error = makeRetryableError(429, "Rate limited");
+		Object.assign(error, { headers: new Headers({ "retry-after": "1" }) });
+		let calls = 0;
+		const fn = vi.fn().mockImplementation(async () => {
+			calls++;
+			if (calls === 1) throw error;
+			return "ok";
+		});
+
+		const result = await withRetry(fn, { baseDelayMs: 1 });
+		expect(result).toBe("ok");
+		expect(fn).toHaveBeenCalledTimes(2);
+	});
+
+	it("prefers retry-after-ms header over retry-after", async () => {
+		const error = makeRetryableError(429, "Rate limited");
+		Object.assign(error, { headers: new Headers({ "retry-after-ms": "50", "retry-after": "10" }) });
+		let calls = 0;
+		const fn = vi.fn().mockImplementation(async () => {
+			calls++;
+			if (calls === 1) throw error;
+			return "ok";
+		});
+
+		const result = await withRetry(fn, { baseDelayMs: 1 });
+		expect(result).toBe("ok");
+		expect(fn).toHaveBeenCalledTimes(2);
+	});
 });
 
 describe("mapProviderError", () => {

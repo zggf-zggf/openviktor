@@ -18,19 +18,40 @@ function isRetryable(error: unknown): boolean {
 	return false;
 }
 
-function getRetryAfterMs(error: unknown): number | null {
-	if (
-		error instanceof Error &&
-		"headers" in error &&
-		typeof (error as Record<string, unknown>).headers === "object"
-	) {
-		const headers = (error as { headers: Record<string, string> }).headers;
-		const retryAfter = headers?.["retry-after"];
-		if (retryAfter) {
-			const seconds = Number.parseFloat(retryAfter);
-			if (!Number.isNaN(seconds)) return seconds * 1000;
+function getHeaderValue(headers: unknown, name: string): string | null {
+	if (headers && typeof headers === "object") {
+		if ("get" in headers && typeof (headers as { get: unknown }).get === "function") {
+			return (headers as { get(name: string): string | null }).get(name);
 		}
+		return (headers as Record<string, string>)[name] ?? null;
 	}
+	return null;
+}
+
+function parseRetryAfterValue(value: string): number | null {
+	const seconds = Number.parseFloat(value);
+	if (!Number.isNaN(seconds)) return seconds * 1000;
+	const date = Date.parse(value);
+	if (!Number.isNaN(date)) {
+		const delayMs = date - Date.now();
+		return delayMs > 0 ? delayMs : 0;
+	}
+	return null;
+}
+
+function getRetryAfterMs(error: unknown): number | null {
+	if (!(error instanceof Error) || !("headers" in error)) return null;
+	const headers = (error as Record<string, unknown>).headers;
+
+	const retryAfterMs = getHeaderValue(headers, "retry-after-ms");
+	if (retryAfterMs) {
+		const ms = Number.parseFloat(retryAfterMs);
+		if (!Number.isNaN(ms)) return ms;
+	}
+
+	const retryAfter = getHeaderValue(headers, "retry-after");
+	if (retryAfter) return parseRetryAfterValue(retryAfter);
+
 	return null;
 }
 

@@ -26,7 +26,18 @@ function toAnthropicMessages(messages: LLMMessage[]): AnthropicMessage[] {
 function extractSystemPrompt(messages: LLMMessage[]): string | undefined {
 	const systemMessages = messages.filter((m) => m.role === "system");
 	if (systemMessages.length === 0) return undefined;
-	return systemMessages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n\n");
+	return systemMessages
+		.map((m) => {
+			if (typeof m.content === "string") return m.content;
+			if (Array.isArray(m.content)) {
+				return m.content
+					.filter((b) => b.type === "text")
+					.map((b) => (b as { text: string }).text)
+					.join("\n\n");
+			}
+			return "";
+		})
+		.join("\n\n");
 }
 
 function toAnthropicTools(tools: LLMToolDefinition[]): AnthropicTool[] {

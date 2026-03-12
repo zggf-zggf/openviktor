@@ -54,7 +54,7 @@ describe("calculateCostCents", () => {
 		expect(cost).toBe(487.5);
 	});
 
-	it("accounts for cache read tokens (subtracted from regular input)", () => {
+	it("accounts for cache read tokens", () => {
 		const cost = calculateCostCents(
 			"claude-sonnet-4-20250514",
 			usage({
@@ -63,10 +63,10 @@ describe("calculateCostCents", () => {
 				cacheReadInputTokens: 400_000,
 			}),
 		);
-		// Regular input: (1M - 400K) = 600K * $3/MTok = $1.80
+		// Input: 1M * $3/MTok = $3.00
 		// Cache read: 400K * $0.30/MTok = $0.12
-		// Total = $1.92 = 192 cents
-		expect(cost).toBe(192);
+		// Total = $3.12 = 312 cents
+		expect(cost).toBe(312);
 	});
 
 	it("returns 0 for zero tokens", () => {

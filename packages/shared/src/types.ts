@@ -6,8 +6,6 @@ export type ToolType = "NATIVE" | "MCP" | "PIPEDREAM" | "CUSTOM";
 
 export type ThreadStatus = "ACTIVE" | "WAITING" | "COMPLETED" | "STALE";
 
-// ─── Content Blocks ────────────────────────────────────
-
 export interface TextBlock {
 	type: "text";
 	text: string;
@@ -29,15 +27,20 @@ export interface ToolResultBlock {
 
 export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
 
-// ─── LLM Types ─────────────────────────────────────────
-
 export interface LLMToolDefinition {
 	name: string;
 	description: string;
 	input_schema: Record<string, unknown>;
 }
 
-export type StopReason = "end_turn" | "max_tokens" | "tool_use" | "stop_sequence";
+export type StopReason =
+	| "end_turn"
+	| "max_tokens"
+	| "tool_use"
+	| "stop_sequence"
+	| "pause_turn"
+	| "refusal"
+	| "model_context_window_exceeded";
 
 export interface LLMMessage {
 	role: "system" | "user" | "assistant";
@@ -66,8 +69,6 @@ export interface LLMProvider {
 		timeoutMs?: number;
 	}): Promise<LLMResponse>;
 }
-
-// ─── Tool System ───────────────────────────────────────
 
 export interface ToolDefinition {
 	name: string;

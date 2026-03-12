@@ -43,9 +43,8 @@ export interface TokenUsage {
 export function calculateCostCents(model: string, usage: TokenUsage): number {
 	const pricing = findPricing(model);
 
-	const regularInput = usage.inputTokens - usage.cacheReadInputTokens;
 	const costDollars =
-		(regularInput / 1_000_000) * pricing.inputPerMTok +
+		(usage.inputTokens / 1_000_000) * pricing.inputPerMTok +
 		(usage.outputTokens / 1_000_000) * pricing.outputPerMTok +
 		(usage.cacheCreationInputTokens / 1_000_000) * pricing.cacheWritePerMTok +
 		(usage.cacheReadInputTokens / 1_000_000) * pricing.cacheReadPerMTok;

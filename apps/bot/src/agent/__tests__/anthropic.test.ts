@@ -91,6 +91,22 @@ describe("AnthropicProvider", () => {
 		expect(params.messages).toEqual([{ role: "user", content: "Hi" }]);
 	});
 
+	it("extracts system messages with ContentBlock[] content", async () => {
+		mockCreate.mockResolvedValue(makeResponse());
+
+		const messages: LLMMessage[] = [
+			{ role: "system", content: [{ type: "text", text: "You are helpful." }] },
+			{ role: "system", content: [{ type: "text", text: "Be concise." }] },
+			{ role: "user", content: "Hi" },
+		];
+
+		await provider.chat({ model: "claude-sonnet-4-20250514", messages });
+
+		const [params] = mockCreate.mock.calls[0];
+		expect(params.system).toBe("You are helpful.\n\nBe concise.");
+		expect(params.messages).toEqual([{ role: "user", content: "Hi" }]);
+	});
+
 	it("passes maxTokens to the API", async () => {
 		mockCreate.mockResolvedValue(makeResponse());
 
