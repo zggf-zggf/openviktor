@@ -14,6 +14,7 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
+		"@anthropic-ai/sdk": "^0.78.0",
 		"@openviktor/db": "workspace:*",
 		"@openviktor/shared": "workspace:*",
 		"@slack/bolt": "^3.22.0"
