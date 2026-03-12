@@ -2,7 +2,7 @@ import type { PrismaClient } from "@openviktor/db";
 import type { Logger } from "@openviktor/shared";
 import type { App } from "@slack/bolt";
 import type { AgentRunner } from "../agent/runner.js";
-import { type SlackClient, resolveMember, resolveWorkspace, stripBotMention } from "./resolve.js";
+import { type SlackClient, resolveMember, resolveWorkspace } from "./resolve.js";
 
 export interface BotContext {
 	prisma: PrismaClient;
@@ -47,20 +47,13 @@ export function registerEventHandlers(app: App, ctx: BotContext): void {
 				botUserId,
 				slackUser,
 			);
-			const userMessage = stripBotMention(rawText, botUserId);
-
-			if (!userMessage) {
-				ctx.logger.debug({ rawText, botUserId }, "Empty message after stripping mention");
-				return;
-			}
-
 			const result = await ctx.runner.run({
 				workspaceId: workspace.id,
 				memberId: member.id,
 				triggerType: "MENTION",
 				slackChannel: event.channel,
 				slackThreadTs: threadTs,
-				userMessage,
+				userMessage: rawText,
 				promptContext: {
 					workspaceName: workspace.slackTeamName,
 					channel: event.channel,
