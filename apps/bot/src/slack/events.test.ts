@@ -64,7 +64,7 @@ describe("registerEventHandlers", () => {
 		expect(ctx.logger.error).toHaveBeenCalled();
 	});
 
-	it("message handler ignores non-DM messages", async () => {
+	it("message handler ignores non-DM, non-thread messages", async () => {
 		const app = makeApp();
 		const { ctx, runMock } = makeContext();
 
@@ -110,6 +110,93 @@ describe("registerEventHandlers", () => {
 			client: {},
 		});
 
+		expect(runMock).not.toHaveBeenCalled();
+	});
+
+	it("message handler ignores bot messages (subtype)", async () => {
+		const app = makeApp();
+		const { ctx, runMock } = makeContext();
+
+		registerEventHandlers(app as never, ctx);
+
+		const messageCall = app.event.mock.calls.find((c: unknown[]) => c[0] === "message");
+		const handler = messageCall?.[1] as (args: Record<string, unknown>) => Promise<void>;
+
+		await handler({
+			event: {
+				channel: "D789",
+				channel_type: "im",
+				user: "U456",
+				text: "bot message",
+				ts: "123.456",
+				subtype: "bot_message",
+			},
+			say: vi.fn(),
+			context: {},
+			client: {},
+		});
+
+		expect(runMock).not.toHaveBeenCalled();
+	});
+
+	it("message handler ignores messages with bot_id", async () => {
+		const app = makeApp();
+		const { ctx, runMock } = makeContext();
+
+		registerEventHandlers(app as never, ctx);
+
+		const messageCall = app.event.mock.calls.find((c: unknown[]) => c[0] === "message");
+		const handler = messageCall?.[1] as (args: Record<string, unknown>) => Promise<void>;
+
+		await handler({
+			event: {
+				channel: "D789",
+				channel_type: "im",
+				user: "U456",
+				text: "from a bot",
+				ts: "123.456",
+				bot_id: "B123",
+			},
+			say: vi.fn(),
+			context: {},
+			client: {},
+		});
+
+		expect(runMock).not.toHaveBeenCalled();
+	});
+
+	it("message handler ignores thread replies when no existing thread in DB", async () => {
+		const app = makeApp();
+		const { ctx, runMock } = makeContext();
+		const findFirstMock = vi.fn().mockResolvedValue(null);
+		(ctx.prisma as unknown as Record<string, unknown>).thread = { findFirst: findFirstMock };
+
+		registerEventHandlers(app as never, ctx);
+
+		const messageCall = app.event.mock.calls.find((c: unknown[]) => c[0] === "message");
+		const handler = messageCall?.[1] as (args: Record<string, unknown>) => Promise<void>;
+
+		await handler({
+			event: {
+				channel: "C123",
+				channel_type: "channel",
+				user: "U456",
+				text: "thread reply",
+				ts: "999.999",
+				thread_ts: "111.111",
+			},
+			say: vi.fn(),
+			context: { teamId: "T1", botUserId: "BOTU", botToken: "xoxb-token" },
+			client: {},
+		});
+
+		expect(findFirstMock).toHaveBeenCalledWith({
+			where: {
+				workspace: { slackTeamId: "T1" },
+				slackChannel: "C123",
+				slackThreadTs: "111.111",
+			},
+		});
 		expect(runMock).not.toHaveBeenCalled();
 	});
 });
