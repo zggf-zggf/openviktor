@@ -93,6 +93,22 @@ We use Linear for issue tracking (OpenViktor project). Follow this workflow:
 - Implement according to specification
 - Create pull request and link to Linear issue
 
+## Viktor Reference Cross-Validation
+
+Every implementation change must be cross-validated against our reverse-engineering knowledge in `docs/viktor-reference/`. Before implementing any feature:
+
+1. Check relevant reference docs (e.g., `thread-orchestrator.md` for thread handling, `tool-gateway.md` for tool execution)
+2. Ensure behavior matches Viktor's known patterns — deviations must be intentional and documented
+3. Key reference files:
+   - `architecture.md` — Overall system design and subsystem interactions
+   - `conversational-style.md` — Tone, formatting, response patterns
+   - `thread-orchestrator.md` — Thread lifecycle, concurrency (16 thread limit)
+   - `tool-gateway.md` — Tool execution, timeouts (600s tool, 120s bash)
+   - `heartbeat.md` — Proactive check-in system (4x/day)
+   - `memory.md` — Knowledge persistence and retrieval
+   - `skill-routing.md` — How Viktor routes to capabilities
+   - `cost-control.md` — Token budgets and tier system
+
 ## Key Patterns
 
 - Slack connection via Socket Mode (no public URL needed)

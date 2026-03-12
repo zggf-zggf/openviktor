@@ -132,6 +132,19 @@ openviktor/
 └── docs/                 # Documentation
 ```
 
+## Viktor Reference Cross-Validation
+
+OpenViktor is a reimplementation of [getviktor.com](https://getviktor.com). We maintain reverse-engineering reference docs in `docs/viktor-reference/` that describe Viktor's actual behavior.
+
+**Before implementing any feature**, check the relevant reference docs to ensure your implementation matches Viktor's known patterns. Intentional deviations are fine but must be documented in the PR description with a rationale.
+
+Key references:
+- `architecture.md` — System design overview
+- `tool-gateway.md` — Tool execution model
+- `thread-orchestrator.md` — Thread lifecycle and concurrency
+- `conversational-style.md` — Response tone and formatting
+- `memory.md` — Knowledge persistence
+
 ## Commit Messages
 
 Use conventional commits:
