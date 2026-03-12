@@ -66,19 +66,22 @@ cp docker/.env.example .env
 # - SLACK_SIGNING_SECRET=...
 # - ANTHROPIC_API_KEY=sk-ant-...
 
-# Start all services
-docker compose -f docker/docker-compose.yml up -d
+# Build and start all services (postgres, redis, bot)
+docker compose -f docker/docker-compose.yml up -d --build
 
-# Check logs
+# Check bot logs (structured JSON)
 docker compose -f docker/docker-compose.yml logs -f bot
 ```
 
 ## 3. Verify
 
+The bot connects to Slack via Socket Mode — no public URL or port forwarding needed. It starts automatically with `docker compose up`.
+
 1. Go to your Slack workspace
 2. Invite the bot to a channel: `/invite @OpenViktor`
 3. Mention the bot: `@OpenViktor hello!`
 4. The bot should respond in a thread
+5. Check structured JSON logs: `docker compose -f docker/docker-compose.yml logs -f bot`
 
 ## Hardware Requirements
 
