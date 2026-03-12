@@ -53,8 +53,8 @@ done
 echo "Generating Prisma client..."
 bun run db:generate 2>&1 | tail -1
 
-echo "Running database migrations..."
-bun run db:migrate 2>&1 | tail -3
+echo "Applying database migrations..."
+bun run --filter @openviktor/db db:migrate:deploy 2>&1 | tail -3
 
 # ─── Start ──────────────────────────────────────────────
 echo ""
