@@ -205,7 +205,7 @@ export class AgentRunner {
 						agentRunId,
 						toolName: toolUse.name,
 						toolType: "NATIVE",
-						input: toolUse.input as Record<string, unknown>,
+						input: toolUse.input as object,
 						output: { error: "Tool execution not available" },
 						status: "FAILED",
 						errorMessage: "No tool executors registered",
