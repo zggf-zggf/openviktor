@@ -198,6 +198,15 @@ export class AgentRunner {
 			}
 
 			const toolUses = response.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+			if (toolUses.length === 0) {
+				this.logger.warn({ agentRunId }, "stopReason=tool_use but no tool_use blocks returned");
+				return {
+					responseText: extractText(response.content) || "I ran into an issue processing your request. Please try again.",
+					inputTokens: totalInputTokens,
+					outputTokens: totalOutputTokens,
+					costCents: totalCostCents,
+				};
+			}
 
 			messages.push({ role: "assistant", content: response.content });
 

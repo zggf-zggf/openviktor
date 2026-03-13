@@ -24,7 +24,7 @@ async function main(): Promise<void> {
 	const app = createSlackApp(config);
 
 	app.use(createDeduplicator());
-	app.use(createBotFilter());
+	app.use(createBotFilter(logger));
 
 	registerEventHandlers(app, { prisma, runner, logger });
 

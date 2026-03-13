@@ -126,6 +126,13 @@ export function registerEventHandlers(app: App, ctx: BotContext): void {
 				return;
 			}
 
+			const slackClient = client as unknown as SlackClient;
+			try {
+				await slackClient.conversations.join({ channel: event.channel });
+			} catch {
+				// Already a member or can't join — continue regardless
+			}
+
 			const { workspace, member } = await resolveContext(
 				ctx,
 				client,

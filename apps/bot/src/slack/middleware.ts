@@ -33,10 +33,14 @@ export function createDeduplicator(ttlMs = 300_000) {
 	};
 }
 
-export function createBotFilter() {
+export function createBotFilter(logger?: { debug: (...args: unknown[]) => void }) {
 	return async (args: AnyMiddlewareArgs & AllMiddlewareArgs): Promise<void> => {
 		const payload = args.payload as { bot_id?: string; subtype?: string } | undefined;
 		if (payload && (payload.bot_id || payload.subtype === "bot_message")) {
+			logger?.debug(
+				{ bot_id: payload.bot_id, subtype: payload.subtype },
+				"BotFilter: dropping bot message",
+			);
 			if ("ack" in args && typeof args.ack === "function") {
 				await args.ack();
 			}

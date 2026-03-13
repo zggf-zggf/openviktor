@@ -5,6 +5,9 @@ export interface SlackClient {
 	users: {
 		info: (params: { user: string }) => Promise<{ user?: { real_name?: string; name?: string } }>;
 	};
+	conversations: {
+		join: (params: { channel: string }) => Promise<unknown>;
+	};
 }
 
 export async function resolveWorkspace(
