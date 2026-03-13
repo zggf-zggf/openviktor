@@ -29,3 +29,4 @@ coverage/
 
 # OMC state
 .omc/
+infra/modal/__pycache__/

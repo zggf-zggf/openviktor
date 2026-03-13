@@ -1,5 +1,5 @@
 import type { Logger } from "@openviktor/shared";
-import type { ToolExecutionContext, ToolRegistry } from "@openviktor/tools";
+import type { ToolBackend, ToolExecutionContext, ToolRegistry } from "@openviktor/tools";
 import { ensureWorkspace } from "@openviktor/tools";
 
 interface GatewayRequest {
@@ -9,6 +9,7 @@ interface GatewayRequest {
 
 interface GatewayDeps {
 	registry: ToolRegistry;
+	backend: ToolBackend;
 	logger: Logger;
 	defaultTimeoutMs: number;
 }
@@ -59,7 +60,7 @@ async function parseBody(req: Request): Promise<GatewayRequest | Response> {
 export function createToolGateway(deps: GatewayDeps): {
 	fetch: (req: Request) => Promise<Response>;
 } {
-	const { registry, logger, defaultTimeoutMs } = deps;
+	const { registry, backend, logger, defaultTimeoutMs } = deps;
 
 	async function handleToolCall(workspaceId: string, body: GatewayRequest): Promise<Response> {
 		if (!body.role || typeof body.role !== "string") {
@@ -75,7 +76,7 @@ export function createToolGateway(deps: GatewayDeps): {
 
 		logger.info({ tool: body.role, workspaceId }, "Tool call started");
 		const start = Date.now();
-		const result = await registry.execute(body.role, body.arguments ?? {}, ctx);
+		const result = await backend.execute(body.role, body.arguments ?? {}, ctx);
 		const durationMs = Date.now() - start;
 
 		if (result.error) {

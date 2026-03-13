@@ -1,5 +1,4 @@
-FROM oven/bun:1-alpine AS base
-RUN apk add --no-cache bash ripgrep
+FROM oven/bun:1-debian AS base
 WORKDIR /app
 
 FROM base AS deps
@@ -13,12 +12,14 @@ COPY packages/integrations/package.json packages/integrations/
 RUN bun install --frozen-lockfile
 
 FROM base AS dev
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN bun run --filter @openviktor/db db:generate
 CMD ["sh", "-c", "bun run --filter @openviktor/db db:migrate:deploy && bun --watch run apps/bot/src/index.ts"]
 
 FROM base AS runner
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN bun run --filter @openviktor/db db:generate

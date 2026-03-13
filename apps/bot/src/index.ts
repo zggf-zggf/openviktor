@@ -1,6 +1,12 @@
 import { prisma } from "@openviktor/db";
 import { createLogger, loadConfig } from "@openviktor/shared";
-import { ToolGatewayClient, createNativeRegistry } from "@openviktor/tools";
+import {
+	LocalToolBackend,
+	ModalToolBackend,
+	ToolGatewayClient,
+	createNativeRegistry,
+} from "@openviktor/tools";
+import type { ToolBackend } from "@openviktor/tools";
 import { LLMGateway } from "./agent/gateway.js";
 import { AgentRunner } from "./agent/runner.js";
 import {
@@ -14,15 +20,38 @@ import { createToolGateway, registerWorkspaceToken } from "./tool-gateway/server
 
 const logger = createLogger("bot");
 
+function createToolBackend(config: ReturnType<typeof loadConfig>): {
+	backend: ToolBackend;
+	registry: ReturnType<typeof createNativeRegistry>;
+} {
+	const registry = createNativeRegistry();
+
+	if (config.TOOL_BACKEND === "modal") {
+		// MODAL_ENDPOINT_URL is validated as required by the config schema
+		const backend = new ModalToolBackend({
+			endpointUrl: config.MODAL_ENDPOINT_URL as string,
+			authToken: config.MODAL_AUTH_TOKEN,
+			timeoutMs: config.TOOL_TIMEOUT_MS,
+		});
+		logger.info({ endpoint: config.MODAL_ENDPOINT_URL }, "Using Modal tool backend");
+		return { backend, registry };
+	}
+
+	const backend = new LocalToolBackend(registry);
+	logger.info("Using local tool backend");
+	return { backend, registry };
+}
+
 async function main(): Promise<void> {
 	const config = loadConfig();
 
 	await prisma.$connect();
 	logger.info("Database connected");
 
-	const registry = createNativeRegistry();
+	const { backend, registry } = createToolBackend(config);
 	const gatewayDeps = {
 		registry,
+		backend,
 		logger: createLogger("tool-gateway"),
 		defaultTimeoutMs: config.TOOL_TIMEOUT_MS,
 	};

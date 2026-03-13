@@ -80,15 +80,6 @@ export const bashExecutor: ToolExecutor = async (args, ctx) => {
 				return;
 			}
 
-			if (code !== 0) {
-				resolve({
-					output,
-					durationMs: 0,
-					error: `Command exited with code ${code}`,
-				});
-				return;
-			}
-
 			resolve({ output, durationMs: 0 });
 		});
 

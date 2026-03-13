@@ -33,9 +33,9 @@ describe("bash", () => {
 		expect(output.exit_code).toBe(0);
 	});
 
-	it("returns stderr and non-zero exit code on failure", async () => {
+	it("returns stderr and non-zero exit code without setting error", async () => {
 		const result = await bashExecutor({ command: "echo err >&2 && exit 42" }, ctx);
-		expect(result.error).toContain("exited with code 42");
+		expect(result.error).toBeUndefined();
 		const output = result.output as { stderr: string; exit_code: number };
 		expect(output.stderr.trim()).toBe("err");
 		expect(output.exit_code).toBe(42);

@@ -1,37 +1,52 @@
 import { z } from "zod";
 
-const envSchema = z.object({
-	// Slack
-	SLACK_BOT_TOKEN: z.string().startsWith("xoxb-"),
-	SLACK_APP_TOKEN: z.string().startsWith("xapp-"),
-	SLACK_SIGNING_SECRET: z.string().min(1),
+const envSchema = z
+	.object({
+		// Slack
+		SLACK_BOT_TOKEN: z.string().startsWith("xoxb-"),
+		SLACK_APP_TOKEN: z.string().startsWith("xapp-"),
+		SLACK_SIGNING_SECRET: z.string().min(1),
 
-	// LLM
-	ANTHROPIC_API_KEY: z.string().min(1),
-	OPENAI_API_KEY: z.string().optional(),
-	GOOGLE_AI_API_KEY: z.string().optional(),
-	DEFAULT_MODEL: z.string().default("claude-sonnet-4-20250514"),
-	MAX_TOKENS: z.coerce.number().default(4096),
+		// LLM
+		ANTHROPIC_API_KEY: z.string().min(1),
+		OPENAI_API_KEY: z.string().optional(),
+		GOOGLE_AI_API_KEY: z.string().optional(),
+		DEFAULT_MODEL: z.string().default("claude-sonnet-4-20250514"),
+		MAX_TOKENS: z.coerce.number().default(4096),
 
-	// Database
-	DATABASE_URL: z.string().url(),
+		// Database
+		DATABASE_URL: z.string().url(),
 
-	// Redis (optional for single-instance)
-	REDIS_URL: z.string().url().optional(),
+		// Redis (optional for single-instance)
+		REDIS_URL: z.string().url().optional(),
 
-	// Application
-	LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-	NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+		// Application
+		LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+		NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 
-	// Limits
-	MAX_CONCURRENT_RUNS: z.coerce.number().default(16),
-	TOOL_TIMEOUT_MS: z.coerce.number().default(600_000),
-	AGENT_TIMEOUT_MS: z.coerce.number().default(300_000),
-	BASH_DEFAULT_TIMEOUT_MS: z.coerce.number().default(120_000),
+		// Limits
+		MAX_CONCURRENT_RUNS: z.coerce.number().default(16),
+		TOOL_TIMEOUT_MS: z.coerce.number().default(600_000),
+		AGENT_TIMEOUT_MS: z.coerce.number().default(300_000),
+		BASH_DEFAULT_TIMEOUT_MS: z.coerce.number().default(120_000),
 
-	// Tool gateway
-	TOOL_GATEWAY_PORT: z.coerce.number().default(3001),
-});
+		// Tool gateway
+		TOOL_GATEWAY_PORT: z.coerce.number().default(3001),
+
+		// Tool backend
+		TOOL_BACKEND: z.enum(["local", "modal"]).default("local"),
+		MODAL_ENDPOINT_URL: z.string().url().optional(),
+		MODAL_AUTH_TOKEN: z.string().min(1).optional(),
+	})
+	.superRefine((data, ctx) => {
+		if (data.TOOL_BACKEND === "modal" && !data.MODAL_ENDPOINT_URL) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "MODAL_ENDPOINT_URL is required when TOOL_BACKEND=modal",
+				path: ["MODAL_ENDPOINT_URL"],
+			});
+		}
+	});
 
 export type EnvConfig = z.infer<typeof envSchema>;
 

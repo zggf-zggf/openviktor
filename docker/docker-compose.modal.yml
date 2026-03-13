@@ -1,0 +1,4 @@
+services:
+  bot-dev:
+    environment:
+      TOOL_BACKEND: modal
