@@ -52,21 +52,15 @@ export class ModalToolBackend implements ToolBackend {
 		const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
 		try {
-			const headers: Record<string, string> = {
-				"Content-Type": "application/json",
-			};
-			if (this.authToken) {
-				headers.Authorization = `Bearer ${this.authToken}`;
-			}
-
-			const response = await fetch(`${this.endpointUrl}/execute`, {
+			const response = await fetch(this.endpointUrl, {
 				method: "POST",
-				headers,
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					tool_name: toolName,
 					arguments: args,
 					workspace_id: ctx.workspaceId,
 					timeout_ms: ctx.timeoutMs,
+					auth_token: this.authToken,
 				}),
 				signal: controller.signal,
 			});

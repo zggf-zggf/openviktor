@@ -15,7 +15,7 @@ const server = Bun.serve({
 	async fetch(req) {
 		const url = new URL(req.url, `http://localhost:${port}`);
 
-		if (req.method !== "POST" || url.pathname !== "/execute") {
+		if (req.method !== "POST") {
 			return Response.json({ error: "Not found" }, { status: 404 });
 		}
 
@@ -24,6 +24,7 @@ const server = Bun.serve({
 			arguments?: Record<string, unknown>;
 			workspace_id?: string;
 			timeout_ms?: number;
+			auth_token?: string;
 		};
 
 		if (!body.tool_name) {

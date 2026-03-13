@@ -100,8 +100,7 @@ describe("ModalToolBackend", () => {
 		handler: (body: Record<string, unknown>) => Record<string, unknown>,
 	): Promise<string> {
 		const { server, url } = await startServer(async (req, res) => {
-			const urlObj = new URL(req.url ?? "/", url);
-			if (req.method !== "POST" || urlObj.pathname !== "/execute") {
+			if (req.method !== "POST") {
 				res.writeHead(404, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ error: "Not found" }));
 				return;
@@ -132,6 +131,7 @@ describe("ModalToolBackend", () => {
 			arguments: { command: "ls" },
 			workspace_id: "ws_test",
 			timeout_ms: 5_000,
+			auth_token: undefined,
 		});
 	});
 
@@ -181,15 +181,13 @@ describe("ModalToolBackend", () => {
 		expect(result.output).toBeNull();
 	});
 
-	it("sends auth token when configured", async () => {
-		let receivedAuth = "";
+	it("sends auth token in request body when configured", async () => {
+		let receivedToken: unknown;
 
-		const { server, url } = await startServer(async (req, res) => {
-			receivedAuth = req.headers.authorization ?? "";
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ result: "ok" }));
+		const url = await startMockModal((body) => {
+			receivedToken = body.auth_token;
+			return { result: "ok" };
 		});
-		activeServer = server;
 
 		const backend = new ModalToolBackend({
 			endpointUrl: url,
@@ -197,23 +195,21 @@ describe("ModalToolBackend", () => {
 		});
 		await backend.execute("bash", {}, makeCtx());
 
-		expect(receivedAuth).toBe("Bearer test-secret-token");
+		expect(receivedToken).toBe("test-secret-token");
 	});
 
-	it("does not send auth header when no token configured", async () => {
-		let receivedAuth: string | undefined = "initial";
+	it("sends undefined auth_token when no token configured", async () => {
+		let receivedToken: unknown = "initial";
 
-		const { server, url } = await startServer(async (req, res) => {
-			receivedAuth = req.headers.authorization;
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ result: "ok" }));
+		const url = await startMockModal((body) => {
+			receivedToken = body.auth_token;
+			return { result: "ok" };
 		});
-		activeServer = server;
 
 		const backend = new ModalToolBackend({ endpointUrl: url });
 		await backend.execute("bash", {}, makeCtx());
 
-		expect(receivedAuth).toBeUndefined();
+		expect(receivedToken).toBeUndefined();
 	});
 
 	it("respects timeout", async () => {
@@ -242,6 +238,6 @@ describe("ModalToolBackend", () => {
 		const backend = new ModalToolBackend({ endpointUrl: `${url}///` });
 		await backend.execute("bash", {}, makeCtx());
 
-		expect(receivedPath).toBe("/execute");
+		expect(receivedPath).toBe("/");
 	});
 });
