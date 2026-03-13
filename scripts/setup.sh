@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
 echo "=== OpenViktor Setup ==="
 echo ""
 
-# Check prerequisites
+# ─── Prerequisites ──────────────────────────────────────
 check_cmd() {
   if ! command -v "$1" &> /dev/null; then
     echo "Error: $1 is required but not installed."
@@ -19,7 +22,7 @@ check_cmd "docker" "https://docs.docker.com/get-docker/"
 echo "Prerequisites OK"
 echo ""
 
-# Copy .env if needed
+# ─── .env ───────────────────────────────────────────────
 if [ ! -f ".env" ]; then
   if [ -f "docker/.env.example" ]; then
     cp docker/.env.example .env
@@ -29,16 +32,20 @@ if [ ! -f ".env" ]; then
   fi
 fi
 
-# Install dependencies
+# Export all vars from .env so Prisma and other tools can find them
+set -a
+source .env
+set +a
+
+# ─── Dependencies ───────────────────────────────────────
 echo "Installing dependencies..."
 bun install
 
-# Start infrastructure
+# ─── Docker ─────────────────────────────────────────────
 echo ""
 echo "Starting PostgreSQL and Redis..."
 docker compose -f docker/docker-compose.yml up -d
 
-# Wait for PostgreSQL
 echo "Waiting for PostgreSQL to be ready..."
 for i in $(seq 1 30); do
   if docker compose -f docker/docker-compose.yml exec -T postgres pg_isready -U openviktor &> /dev/null; then
@@ -52,7 +59,7 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-# Generate Prisma client and run migrations
+# ─── Database ───────────────────────────────────────────
 echo ""
 echo "Generating Prisma client..."
 bun run db:generate
@@ -65,6 +72,6 @@ echo "=== Setup Complete ==="
 echo ""
 echo "Next steps:"
 echo "  1. Edit .env with your Slack and Anthropic credentials"
-echo "  2. Run: bun run dev"
+echo "  2. Run: ./scripts/dev.sh"
 echo "  3. Invite @OpenViktor to a Slack channel and mention it"
 echo ""

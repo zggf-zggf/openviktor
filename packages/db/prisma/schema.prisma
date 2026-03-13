@@ -98,7 +98,7 @@ model Message {
   agentRunId   String   @map("agent_run_id")
   role         String
   content      String
-  slackTs      String?  @map("slack_ts")
+  slackThreadTs String?  @map("slack_thread_ts")
   slackChannel String?  @map("slack_channel")
   tokenCount   Int      @default(0) @map("token_count")
   createdAt    DateTime @default(now()) @map("created_at")
