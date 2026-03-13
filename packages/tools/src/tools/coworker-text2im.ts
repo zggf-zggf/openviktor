@@ -58,7 +58,7 @@ function parseText2ImArgs(args: Record<string, unknown>): Text2ImArgs | null {
 function makeStubResponse(request: Text2ImArgs): ToolResult {
 	return {
 		output: {
-			error: "Image generation requires IMAGEN_API_KEY to be configured",
+			status: "stubbed",
 			request: {
 				provider: "imagen",
 				prompt: request.prompt,
@@ -66,7 +66,7 @@ function makeStubResponse(request: Text2ImArgs): ToolResult {
 				height: request.height,
 				style: request.style,
 			},
-			stub: "Image API call is intentionally stubbed and not executed",
+			message: "Image API call is intentionally stubbed and not executed",
 		},
 		durationMs: 0,
 	};

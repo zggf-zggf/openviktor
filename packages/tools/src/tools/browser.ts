@@ -285,8 +285,7 @@ export function createBrowserExecutors(browserbaseApiKey: string): {
 
 		try {
 			const downloads = await listDownloads(args.session_id, browserbaseApiKey);
-			const destinationDir = resolveSafePath(ctx.workspaceDir, targetDirectory);
-			await resolveSafePathStrict(ctx.workspaceDir, targetDirectory);
+			const destinationDir = await resolveSafePathStrict(ctx.workspaceDir, targetDirectory);
 			await mkdir(destinationDir, { recursive: true });
 
 			const paths = await downloadAllFiles(downloads, destinationDir, browserbaseApiKey);

@@ -39,7 +39,7 @@ volume = modal.Volume.from_name("openviktor-workspaces", create_if_missing=True)
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("ripgrep", "git", "pandoc", "poppler-utils")
+    .apt_install("ripgrep", "git", "pandoc", "poppler-utils", "curl")
     .pip_install("fastapi[standard]")
     .run_commands("(curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg) && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y gh")
 )
@@ -519,6 +519,13 @@ def tool_coworker_download_from_slack(args: dict, workspace_dir: str) -> dict:
         return {"error": "SLACK_BOT_TOKEN not configured"}
 
     try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".slack.com"):
+            return {"error": "URL must be an https://*.slack.com address"}
+    except Exception:
+        return {"error": "Invalid URL"}
+
+    try:
         data = _http_download(url, {"Authorization": f"Bearer {token}"})
     except Exception as e:
         return {"error": f"Download failed: {e}"}
@@ -859,6 +866,7 @@ def tool_browser_create_session(args: dict, workspace_dir: str) -> dict:
         "browserSettings": {"viewport": {"width": viewport_width, "height": viewport_height}},
         "proxies": enable_proxies,
         "timeout": timeout_seconds,
+        "startingUrl": starting_url,
     }).encode()
 
     try:
@@ -1002,12 +1010,14 @@ def tool_query_library_docs(args: dict, workspace_dir: str) -> dict:
     url = f"{base_url}/libraries/{urllib.parse.quote(library_id, safe='/')}/docs?topic={urllib.parse.quote(str(topic))}&tokens={max_tokens}"
     try:
         data = _http_json_request(url)
+        if isinstance(data, dict) and data.get("ok") is False:
+            return {"error": data.get("error", "Context7 API request failed")}
         return {"result": {
             "content": data.get("content", ""),
             "title": data.get("title", ""),
         }}
     except Exception as e:
-        return {"result": {"content": "", "title": "", "error": str(e)}}
+        return {"error": f"Context7 request failed: {e}"}
 
 
 # ---------------------------------------------------------------------------
@@ -1159,6 +1169,9 @@ def tool_quick_ai_search(args: dict, workspace_dir: str) -> dict:
     except Exception as e:
         return {"error": f"Brave Search failed: {e}"}
 
+    if isinstance(data, dict) and data.get("ok") is False:
+        return {"error": data.get("error", "Brave Search request failed")}
+
     results = (data.get("web") or {}).get("results") or []
     if not results:
         return {"result": {"search_response": "No search results found."}}
@@ -1178,10 +1191,10 @@ def tool_coworker_text2im(args: dict, workspace_dir: str) -> dict:
 
     api_key = os.environ.get("IMAGEN_API_KEY", "")
     if not api_key:
-        return {"result": {"error": "Image generation requires IMAGEN_API_KEY to be configured"}}
+        return {"error": "Image generation requires IMAGEN_API_KEY to be configured"}
 
     return {"result": {
-        "error": "Image generation requires IMAGEN_API_KEY to be configured",
+        "status": "stubbed",
         "request": {
             "provider": "imagen",
             "prompt": prompt,
@@ -1189,7 +1202,7 @@ def tool_coworker_text2im(args: dict, workspace_dir: str) -> dict:
             "height": args.get("height", 1024),
             "style": args.get("style"),
         },
-        "stub": "Image API call is intentionally stubbed and not executed",
+        "message": "Image API call is intentionally stubbed and not executed",
     }}
 
 

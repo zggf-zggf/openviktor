@@ -79,28 +79,36 @@ export function createQuickAiSearchExecutor(opts: {
 
 async function braveSearch(question: string, apiKey: string): Promise<SearchResultItem[]> {
 	const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(question)}&count=5`;
-	const response = await fetch(url, {
-		method: "GET",
-		headers: {
-			Accept: "application/json",
-			"X-Subscription-Token": apiKey,
-		},
-	});
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), 15_000);
 
-	if (!response.ok) {
-		throw new Error(`Brave Search failed with status ${response.status}`);
+	try {
+		const response = await fetch(url, {
+			method: "GET",
+			headers: {
+				Accept: "application/json",
+				"X-Subscription-Token": apiKey,
+			},
+			signal: controller.signal,
+		});
+
+		if (!response.ok) {
+			throw new Error(`Brave Search failed with status ${response.status}`);
+		}
+
+		const payload = (await response.json()) as {
+			web?: { results?: Array<{ title?: string; description?: string; url?: string }> };
+		};
+		const entries = payload.web?.results ?? [];
+
+		return entries.slice(0, 5).map((item) => ({
+			title: item.title ?? "",
+			description: item.description ?? "",
+			url: item.url ?? "",
+		}));
+	} finally {
+		clearTimeout(timer);
 	}
-
-	const payload = (await response.json()) as {
-		web?: { results?: Array<{ title?: string; description?: string; url?: string }> };
-	};
-	const entries = payload.web?.results ?? [];
-
-	return entries.slice(0, 5).map((item) => ({
-		title: item.title ?? "",
-		description: item.description ?? "",
-		url: item.url ?? "",
-	}));
 }
 
 async function summarizeWithLlm(

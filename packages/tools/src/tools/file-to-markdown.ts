@@ -135,16 +135,31 @@ async function runProcess(
 
 		let stdout = "";
 		let stderr = "";
+		let killed = false;
+
+		const timer = setTimeout(() => {
+			killed = true;
+			child.kill("SIGKILL");
+		}, 30_000);
 
 		child.stdout.on("data", (data: Buffer) => {
-			stdout += data.toString();
+			if (stdout.length < MAX_OUTPUT_BYTES) {
+				stdout += data.toString();
+			}
 		});
 
 		child.stderr.on("data", (data: Buffer) => {
-			stderr += data.toString();
+			if (stderr.length < MAX_OUTPUT_BYTES) {
+				stderr += data.toString();
+			}
 		});
 
 		child.on("close", (code) => {
+			clearTimeout(timer);
+			if (killed) {
+				resolve({ stdout, stderr, error: `${command} timed out after 30s` });
+				return;
+			}
 			if (code === 0) {
 				resolve({ stdout, stderr });
 				return;
@@ -157,6 +172,7 @@ async function runProcess(
 		});
 
 		child.on("error", (err: NodeJS.ErrnoException) => {
+			clearTimeout(timer);
 			resolve({
 				stdout,
 				stderr,

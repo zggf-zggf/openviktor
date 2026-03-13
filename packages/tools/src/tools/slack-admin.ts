@@ -100,6 +100,10 @@ export const coworkerListSlackChannelsDefinition: LLMToolDefinition = {
 				type: "number",
 				description: "Maximum number of channels to return (default: 200)",
 			},
+			cursor: {
+				type: "string",
+				description: "Pagination cursor from a previous response's next_cursor",
+			},
 		},
 	},
 };
@@ -112,8 +116,12 @@ export function createCoworkerListSlackChannelsExecutor(slackToken: string): Too
 					? args.types
 					: "public_channel,private_channel";
 			const limit = typeof args.limit === "number" ? args.limit : 200;
+			const params: Record<string, unknown> = { types, limit };
+			if (typeof args.cursor === "string" && args.cursor.length > 0) {
+				params.cursor = args.cursor;
+			}
 
-			const response = await callSlackApi(slackToken, "conversations.list", { types, limit });
+			const response = await callSlackApi(slackToken, "conversations.list", params);
 			const channels = (response.channels ?? []).map((channel) => ({
 				id: channel.id,
 				name: channel.name,
@@ -285,6 +293,10 @@ export const coworkerListSlackUsersDefinition: LLMToolDefinition = {
 				type: "number",
 				description: "Maximum number of users to return (default: 200)",
 			},
+			cursor: {
+				type: "string",
+				description: "Pagination cursor from a previous response's next_cursor",
+			},
 		},
 	},
 };
@@ -293,7 +305,11 @@ export function createCoworkerListSlackUsersExecutor(slackToken: string): ToolEx
 	return async (args): Promise<ToolResult> => {
 		try {
 			const limit = typeof args.limit === "number" ? args.limit : 200;
-			const response = await callSlackApi(slackToken, "users.list", { limit });
+			const params: Record<string, unknown> = { limit };
+			if (typeof args.cursor === "string" && args.cursor.length > 0) {
+				params.cursor = args.cursor;
+			}
+			const response = await callSlackApi(slackToken, "users.list", params);
 			const members = (response.members ?? []).map((member) => ({
 				id: member.id,
 				name: member.name ?? "",
@@ -431,7 +447,10 @@ export const coworkerReportIssueDefinition: LLMToolDefinition = {
 	},
 };
 
-function parseRequiredIssueField(args: Record<string, unknown>, key: "title" | "description"): string {
+function parseRequiredIssueField(
+	args: Record<string, unknown>,
+	key: "title" | "description",
+): string {
 	const value = args[key];
 	if (typeof value !== "string" || value.trim().length === 0) {
 		throw new Error(`${key} must be a non-empty string`);

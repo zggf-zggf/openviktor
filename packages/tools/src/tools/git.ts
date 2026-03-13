@@ -24,6 +24,7 @@ async function runCommand(
 	args: string[],
 	cwd: string,
 	env: NodeJS.ProcessEnv,
+	timeoutMs = 120_000,
 ): Promise<ToolResult> {
 	return new Promise<ToolResult>((resolve) => {
 		const child = spawn(bin, args, {
@@ -34,6 +35,12 @@ async function runCommand(
 
 		let stdout = "";
 		let stderr = "";
+		let killed = false;
+
+		const timer = setTimeout(() => {
+			killed = true;
+			child.kill("SIGKILL");
+		}, timeoutMs);
 
 		child.stdout.on("data", (data: Buffer) => {
 			if (stdout.length < MAX_OUTPUT_BYTES) {
@@ -48,6 +55,15 @@ async function runCommand(
 		});
 
 		child.on("close", (code) => {
+			clearTimeout(timer);
+			if (killed) {
+				resolve({
+					output: null,
+					durationMs: 0,
+					error: `${bin} timed out after ${timeoutMs}ms`,
+				});
+				return;
+			}
 			const exitCode = code ?? -1;
 			const output: CommandOutput = {
 				success: exitCode === 0,
@@ -59,6 +75,7 @@ async function runCommand(
 		});
 
 		child.on("error", (err) => {
+			clearTimeout(timer);
 			resolve({ output: null, durationMs: 0, error: `Failed to spawn process: ${err.message}` });
 		});
 	});
@@ -153,7 +170,7 @@ export function createGitExecutors(githubToken?: string): {
 			);
 			return runCommand("gh", args.args, resolvedDir, {
 				...process.env,
-				GH_TOKEN: githubToken ?? "",
+				...(githubToken ? { GH_TOKEN: githubToken } : {}),
 				NO_COLOR: "1",
 			});
 		} catch (err) {

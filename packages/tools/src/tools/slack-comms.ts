@@ -316,7 +316,7 @@ function parseWaitForPathsArgs(args: Record<string, unknown>): WaitForPathsArgs 
 		throw new Error("timeout_ms must be >= 0 and poll_interval_ms must be > 0");
 	}
 	return {
-		inputPaths: rawPaths as string[],
+		inputPaths: [...new Set(rawPaths as string[])],
 		timeoutMs,
 		pollIntervalMs,
 	};
@@ -551,11 +551,31 @@ function createCoworkerUploadToSlackExecutor(slackToken: string): ToolExecutor {
 		}
 	};
 }
+function isSlackHostname(url: string): boolean {
+	try {
+		const parsed = new URL(url);
+		return (
+			parsed.protocol === "https:" &&
+			(parsed.hostname === "files.slack.com" || parsed.hostname.endsWith(".slack.com"))
+		);
+	} catch {
+		return false;
+	}
+}
+
 function createCoworkerDownloadFromSlackExecutor(slackToken: string): ToolExecutor {
 	return async (args, ctx) => {
 		try {
 			const url = getRequiredString(args, "url");
 			const savePath = getRequiredString(args, "save_path");
+
+			if (!isSlackHostname(url)) {
+				return {
+					output: null,
+					durationMs: 0,
+					error: "URL must be an https://*.slack.com address",
+				};
+			}
 
 			const response = await fetch(url, {
 				headers: {
