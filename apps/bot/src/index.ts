@@ -29,7 +29,7 @@ function createToolBackend(config: ReturnType<typeof loadConfig>): {
 	if (config.TOOL_BACKEND === "modal") {
 		// MODAL_ENDPOINT_URL is validated as required by the config schema
 		const backend = new ModalToolBackend({
-			endpointUrl: config.MODAL_ENDPOINT_URL!,
+			endpointUrl: config.MODAL_ENDPOINT_URL as string,
 			authToken: config.MODAL_AUTH_TOKEN,
 			timeoutMs: config.TOOL_TIMEOUT_MS,
 		});
