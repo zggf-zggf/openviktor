@@ -86,9 +86,10 @@ The bot connects to Slack via Socket Mode — no public URL or port forwarding n
 1. Go to your Slack workspace
 2. Invite the bot to a channel: `/invite @OpenViktor`
 3. Mention the bot: `@OpenViktor hello!`
-4. Check structured JSON logs: `docker compose -f docker/docker-compose.yml logs -f bot`
-5. You should see an `app_mention` event logged with channel, user, and text fields
-6. Send a DM to the bot — you should see a `message_im` event logged
+4. The bot should reply in the thread within a few seconds with an AI-generated response
+5. Send a DM to the bot — it should reply in conversation
+6. Check structured JSON logs: `docker compose -f docker/docker-compose.yml logs -f bot`
+7. You should see agent run entries with `status: "COMPLETED"`, token counts, and cost
 
 ## Hardware Requirements
 

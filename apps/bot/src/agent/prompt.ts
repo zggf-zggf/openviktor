@@ -12,7 +12,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 		"",
 		"## Guidelines",
 		"- Be concise and direct. Avoid unnecessary filler.",
-		"- Use Slack-compatible markdown (*bold*, `code`, ```code blocks```).",
+		"- Format responses using Markdown (**bold**, *italic*, `code`, ```code blocks```, [links](url)).",
 		"- If you don't know something, say so honestly.",
 		"- Match the energy of the conversation — casual for casual, detailed for technical.",
 		"",

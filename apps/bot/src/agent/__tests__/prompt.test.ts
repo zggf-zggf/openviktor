@@ -47,6 +47,6 @@ describe("buildSystemPrompt", () => {
 		const prompt = buildSystemPrompt(makeContext());
 		expect(prompt).toContain("OpenViktor");
 		expect(prompt).toContain("## Guidelines");
-		expect(prompt).toContain("Slack-compatible markdown");
+		expect(prompt).toContain("Format responses using Markdown");
 	});
 });

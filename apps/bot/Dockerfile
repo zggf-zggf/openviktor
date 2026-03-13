@@ -13,4 +13,5 @@ RUN bun install --frozen-lockfile
 FROM base AS runner
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-CMD ["bun", "run", "apps/bot/src/index.ts"]
+RUN bunx prisma generate --schema=packages/db/prisma/schema.prisma
+CMD ["sh", "-c", "bunx prisma migrate deploy --schema=packages/db/prisma/schema.prisma && bun run apps/bot/src/index.ts"]

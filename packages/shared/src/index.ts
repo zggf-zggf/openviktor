@@ -18,3 +18,4 @@ export type {
 	ToolResult,
 } from "./types.js";
 export { AppError, ConfigError, LLMError, ToolTimeoutError, SlackError } from "./errors.js";
+export { markdownToMrkdwn, chunkMessage } from "./mrkdwn.js";

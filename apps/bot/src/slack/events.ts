@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@openviktor/db";
-import type { Logger } from "@openviktor/shared";
+import { type Logger, chunkMessage, markdownToMrkdwn } from "@openviktor/shared";
 import type { App } from "@slack/bolt";
 import type { AgentRunner } from "../agent/runner.js";
 import { type SlackClient, resolveMember, resolveWorkspace } from "./resolve.js";
@@ -94,7 +94,19 @@ async function handleMessage(
 		},
 	});
 
-	await say({ text: result.responseText, thread_ts: threadTs });
+	await sendResponse(say, result.responseText, threadTs);
+}
+
+async function sendResponse(
+	say: (opts: { text: string; thread_ts?: string }) => Promise<unknown>,
+	responseText: string,
+	threadTs: string,
+): Promise<void> {
+	const mrkdwn = markdownToMrkdwn(responseText);
+	const chunks = chunkMessage(mrkdwn);
+	for (const chunk of chunks) {
+		await say({ text: chunk, thread_ts: threadTs });
+	}
 }
 
 async function safeReply(
@@ -156,7 +168,7 @@ export function registerEventHandlers(app: App, ctx: BotContext): void {
 				},
 			});
 
-			await say({ text: result.responseText, thread_ts: threadTs });
+			await sendResponse(say, result.responseText, threadTs);
 		} catch (error) {
 			ctx.logger.error({ err: error, event: "app_mention" }, "Failed to handle mention");
 			await safeReply(say, threadTs);
