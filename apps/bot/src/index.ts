@@ -1,5 +1,6 @@
 import { prisma } from "@openviktor/db";
 import { createLogger, loadConfig } from "@openviktor/shared";
+import { createNativeRegistry, ensureWorkspace } from "@openviktor/tools";
 import { LLMGateway } from "./agent/gateway.js";
 import { AgentRunner } from "./agent/runner.js";
 import {
@@ -18,8 +19,15 @@ async function main(): Promise<void> {
 	await prisma.$connect();
 	logger.info("Database connected");
 
+	const registry = createNativeRegistry();
+	logger.info({ tools: registry.getDefinitions().map((t) => t.name) }, "Tool registry initialized");
+
 	const llm = new LLMGateway(config);
-	const runner = new AgentRunner(prisma, llm, createLogger("agent-runner"));
+	const runner = new AgentRunner(prisma, llm, createLogger("agent-runner"), {
+		registry,
+		workspaceDir: "/data/workspaces/default",
+		defaultTimeoutMs: config.TOOL_TIMEOUT_MS,
+	});
 
 	const app = createSlackApp(config);
 
