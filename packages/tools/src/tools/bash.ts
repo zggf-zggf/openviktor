@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import type { LLMToolDefinition, ToolResult } from "@openviktor/shared";
 import type { ToolExecutor } from "../registry.js";
-import { resolveSafePath } from "../workspace.js";
 
 const MAX_OUTPUT_BYTES = 32_768;
 

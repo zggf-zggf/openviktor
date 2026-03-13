@@ -391,7 +391,11 @@ export class AgentRunner {
 				toolName: toolUse.name,
 				toolType: "NATIVE",
 				input: toolUse.input as object,
-				output: error ? { error } : ((output as object) ?? {}),
+				output: error
+					? { error }
+					: typeof output === "object" && output !== null
+						? (output as object)
+						: { value: output },
 				status,
 				durationMs,
 				errorMessage: error ?? null,

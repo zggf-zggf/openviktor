@@ -43,8 +43,15 @@ export const grepDefinition: LLMToolDefinition = {
 
 export const grepExecutor: ToolExecutor = async (args, ctx) => {
 	const pattern = args.pattern as string;
-	const searchPath =
-		typeof args.path === "string" ? resolveSafePath(ctx.workspaceDir, args.path) : ctx.workspaceDir;
+	let searchPath: string;
+	try {
+		searchPath =
+			typeof args.path === "string"
+				? resolveSafePath(ctx.workspaceDir, args.path)
+				: ctx.workspaceDir;
+	} catch (err) {
+		return { output: null, durationMs: 0, error: err instanceof Error ? err.message : String(err) };
+	}
 
 	const rgArgs = ["--color", "never", "--line-number"];
 

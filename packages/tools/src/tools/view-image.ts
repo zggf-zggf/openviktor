@@ -4,7 +4,7 @@ import type { LLMToolDefinition } from "@openviktor/shared";
 import type { ToolExecutor } from "../registry.js";
 import { resolveSafePathStrict } from "../workspace.js";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 3 * 1024 * 1024; // 3 MB
 
 const MIME_TYPES: Record<string, string> = {
 	".png": "image/png",

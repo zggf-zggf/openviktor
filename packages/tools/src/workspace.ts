@@ -37,14 +37,21 @@ export async function resolveSafePathStrict(
 		throw new Error(`Path escapes workspace: ${userPath}`);
 	}
 
-	if (existsSync(absTarget)) {
-		const stats = await lstat(absTarget);
-		if (stats.isSymbolicLink()) {
-			const linkTarget = await readlink(absTarget);
-			const resolvedLink = resolve(absTarget, "..", linkTarget);
-			const realTarget = await realpath(resolvedLink);
-			if (!realTarget.startsWith(`${absWorkspace}/`) && realTarget !== absWorkspace) {
-				throw new Error(`Symlink escapes workspace: ${userPath} -> ${linkTarget}`);
+	// Check every path component from workspace root to target for symlinks that escape.
+	const relative = absTarget.slice(absWorkspace.length);
+	const parts = relative.split("/").filter(Boolean);
+	let current = absWorkspace;
+	for (const part of parts) {
+		current = join(current, part);
+		if (existsSync(current)) {
+			const stats = await lstat(current);
+			if (stats.isSymbolicLink()) {
+				const linkTarget = await readlink(current);
+				const resolvedLink = resolve(current, "..", linkTarget);
+				const realTarget = await realpath(resolvedLink);
+				if (!realTarget.startsWith(`${absWorkspace}/`) && realTarget !== absWorkspace) {
+					throw new Error(`Symlink escapes workspace: ${current} -> ${linkTarget}`);
+				}
 			}
 		}
 	}

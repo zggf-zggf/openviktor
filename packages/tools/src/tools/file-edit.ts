@@ -37,6 +37,10 @@ export const fileEditExecutor: ToolExecutor = async (args, ctx) => {
 	const newString = args.new_string as string;
 	const replaceAll = args.replace_all === true;
 
+	if (oldString.length === 0) {
+		return { output: null, durationMs: 0, error: "old_string must not be empty" };
+	}
+
 	const absPath = await resolveSafePathStrict(ctx.workspaceDir, filePath);
 	const content = await readFile(absPath, "utf-8");
 

@@ -27,8 +27,15 @@ export const globDefinition: LLMToolDefinition = {
 
 export const globExecutor: ToolExecutor = async (args, ctx) => {
 	const pattern = args.pattern as string;
-	const searchPath =
-		typeof args.path === "string" ? resolveSafePath(ctx.workspaceDir, args.path) : ctx.workspaceDir;
+	let searchPath: string;
+	try {
+		searchPath =
+			typeof args.path === "string"
+				? resolveSafePath(ctx.workspaceDir, args.path)
+				: ctx.workspaceDir;
+	} catch (err) {
+		return { output: null, durationMs: 0, error: err instanceof Error ? err.message : String(err) };
+	}
 
 	return new Promise<ToolResult>((resolve) => {
 		const child = spawn("find", [searchPath, "-maxdepth", "10", "-type", "f", "-name", pattern], {
@@ -47,7 +54,12 @@ export const globExecutor: ToolExecutor = async (args, ctx) => {
 			stderr += data.toString();
 		});
 
-		child.on("close", () => {
+		child.on("close", (code) => {
+			if (code !== 0 && stderr.trim()) {
+				resolve({ output: null, durationMs: 0, error: `Glob failed: ${stderr.trim()}` });
+				return;
+			}
+
 			const prefix = ctx.workspaceDir.endsWith("/") ? ctx.workspaceDir : `${ctx.workspaceDir}/`;
 			const files = stdout
 				.trim()

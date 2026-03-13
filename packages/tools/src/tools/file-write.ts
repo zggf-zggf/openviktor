@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { LLMToolDefinition } from "@openviktor/shared";
 import type { ToolExecutor } from "../registry.js";
-import { resolveSafePath } from "../workspace.js";
+import { resolveSafePathStrict } from "../workspace.js";
 
 export const fileWriteDefinition: LLMToolDefinition = {
 	name: "file_write",
@@ -28,7 +28,7 @@ export const fileWriteExecutor: ToolExecutor = async (args, ctx) => {
 	const filePath = args.path as string;
 	const content = args.content as string;
 
-	const absPath = resolveSafePath(ctx.workspaceDir, filePath);
+	const absPath = await resolveSafePathStrict(ctx.workspaceDir, filePath);
 	await mkdir(dirname(absPath), { recursive: true });
 	await writeFile(absPath, content, "utf-8");
 

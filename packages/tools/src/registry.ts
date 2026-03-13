@@ -62,7 +62,11 @@ export class ToolRegistry {
 					setTimeout(() => reject(new ToolTimeoutError(name, ctx.timeoutMs)), ctx.timeoutMs),
 				),
 			]);
-			this.failures.set(name, 0);
+			if (result.error) {
+				this.failures.set(name, failCount + 1);
+			} else {
+				this.failures.set(name, 0);
+			}
 			return { ...result, durationMs: Date.now() - start };
 		} catch (error) {
 			const durationMs = Date.now() - start;

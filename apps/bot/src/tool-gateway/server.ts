@@ -38,7 +38,19 @@ function validateAuth(req: Request): string | Response {
 
 async function parseBody(req: Request): Promise<GatewayRequest | Response> {
 	try {
-		return (await req.json()) as GatewayRequest;
+		const body = (await req.json()) as Record<string, unknown>;
+		if (
+			body.arguments !== undefined &&
+			(typeof body.arguments !== "object" ||
+				body.arguments === null ||
+				Array.isArray(body.arguments))
+		) {
+			return Response.json(
+				{ error: "Invalid 'arguments' field: must be an object" },
+				{ status: 400 },
+			);
+		}
+		return body as unknown as GatewayRequest;
 	} catch {
 		return Response.json({ error: "Invalid JSON body" }, { status: 400 });
 	}
@@ -80,7 +92,7 @@ export function createToolGateway(deps: GatewayDeps): {
 
 	return {
 		fetch: async (req: Request): Promise<Response> => {
-			const url = new URL(req.url);
+			const url = new URL(req.url, "http://localhost");
 
 			if (req.method === "GET" && url.pathname === "/health") {
 				return Response.json({ status: "ok", tools: registry.getDefinitions().length });
