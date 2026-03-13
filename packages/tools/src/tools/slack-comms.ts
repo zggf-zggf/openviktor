@@ -1,0 +1,705 @@
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import type { LLMToolDefinition } from "@openviktor/shared";
+import type { ToolExecutionContext, ToolExecutor } from "../registry.js";
+import { resolveSafePath } from "../workspace.js";
+
+type SlackToolName =
+	| "coworker_slack_history"
+	| "coworker_send_slack_message"
+	| "coworker_slack_react"
+	| "coworker_delete_slack_message"
+	| "coworker_upload_to_slack"
+	| "coworker_download_from_slack"
+	| "create_thread"
+	| "send_message_to_thread"
+	| "wait_for_paths";
+
+type JsonRecord = Record<string, unknown>;
+
+interface SlackApiSuccess {
+	ok: true;
+	data: JsonRecord;
+}
+
+interface SlackApiFailure {
+	ok: false;
+	error: string;
+}
+
+const SLACK_API_BASE_URL = "https://slack.com/api";
+
+export const coworkerSlackHistoryDefinition: LLMToolDefinition = {
+	name: "coworker_slack_history",
+	description: "Fetch Slack channel message history.",
+	input_schema: {
+		type: "object",
+		properties: {
+			channel: { type: "string", description: "Slack channel ID" },
+			limit: { type: "number", description: "Maximum messages to return (default: 20)" },
+			oldest: { type: "string", description: "Oldest timestamp boundary" },
+			latest: { type: "string", description: "Latest timestamp boundary" },
+		},
+		required: ["channel"],
+	},
+};
+
+export const coworkerSendSlackMessageDefinition: LLMToolDefinition = {
+	name: "coworker_send_slack_message",
+	description: "Send a Slack message to a channel or thread.",
+	input_schema: {
+		type: "object",
+		properties: {
+			channel: { type: "string", description: "Slack channel ID" },
+			text: { type: "string", description: "Message text" },
+			thread_ts: { type: "string", description: "Thread timestamp" },
+		},
+		required: ["channel", "text"],
+	},
+};
+
+export const coworkerSlackReactDefinition: LLMToolDefinition = {
+	name: "coworker_slack_react",
+	description: "Add an emoji reaction to a Slack message.",
+	input_schema: {
+		type: "object",
+		properties: {
+			channel: { type: "string", description: "Slack channel ID" },
+			timestamp: { type: "string", description: "Message timestamp" },
+			emoji: { type: "string", description: "Emoji name without colons" },
+		},
+		required: ["channel", "timestamp", "emoji"],
+	},
+};
+
+export const coworkerDeleteSlackMessageDefinition: LLMToolDefinition = {
+	name: "coworker_delete_slack_message",
+	description: "Delete a Slack message.",
+	input_schema: {
+		type: "object",
+		properties: {
+			channel: { type: "string", description: "Slack channel ID" },
+			timestamp: { type: "string", description: "Message timestamp" },
+		},
+		required: ["channel", "timestamp"],
+	},
+};
+
+export const coworkerUploadToSlackDefinition: LLMToolDefinition = {
+	name: "coworker_upload_to_slack",
+	description: "Upload a local file to Slack using external upload APIs.",
+	input_schema: {
+		type: "object",
+		properties: {
+			channel: { type: "string", description: "Slack channel ID" },
+			file_path: { type: "string", description: "Workspace-relative file path" },
+			filename: { type: "string", description: "Optional upload filename" },
+			title: { type: "string", description: "Optional file title" },
+		},
+		required: ["channel", "file_path"],
+	},
+};
+
+export const coworkerDownloadFromSlackDefinition: LLMToolDefinition = {
+	name: "coworker_download_from_slack",
+	description: "Download a Slack file URL into the workspace.",
+	input_schema: {
+		type: "object",
+		properties: {
+			url: { type: "string", description: "Slack file URL" },
+			save_path: { type: "string", description: "Workspace-relative destination path" },
+		},
+		required: ["url", "save_path"],
+	},
+};
+
+export const createThreadDefinition: LLMToolDefinition = {
+	name: "create_thread",
+	description: "Create a new Slack thread by posting a root message.",
+	input_schema: {
+		type: "object",
+		properties: {
+			channel: { type: "string", description: "Slack channel ID" },
+			text: { type: "string", description: "Root message text" },
+		},
+		required: ["channel", "text"],
+	},
+};
+
+export const sendMessageToThreadDefinition: LLMToolDefinition = {
+	name: "send_message_to_thread",
+	description: "Send a reply into an existing Slack thread.",
+	input_schema: {
+		type: "object",
+		properties: {
+			channel: { type: "string", description: "Slack channel ID" },
+			thread_ts: { type: "string", description: "Root thread timestamp" },
+			text: { type: "string", description: "Reply text" },
+		},
+		required: ["channel", "thread_ts", "text"],
+	},
+};
+
+export const waitForPathsDefinition: LLMToolDefinition = {
+	name: "wait_for_paths",
+	description: "Wait for one or more workspace paths to appear.",
+	input_schema: {
+		type: "object",
+		properties: {
+			paths: {
+				type: "array",
+				items: { type: "string" },
+				description: "Workspace-relative paths to wait for",
+			},
+			timeout_ms: { type: "number", description: "Max wait time in milliseconds (default: 30000)" },
+			poll_interval_ms: {
+				type: "number",
+				description: "Polling interval in milliseconds (default: 500)",
+			},
+		},
+		required: ["paths"],
+	},
+};
+
+async function slackApiCall(
+	slackToken: string,
+	method: string,
+	params: Record<string, string>,
+): Promise<SlackApiSuccess | SlackApiFailure> {
+	try {
+		const body = new URLSearchParams();
+		for (const [key, value] of Object.entries(params)) {
+			body.set(key, value);
+		}
+
+		const response = await fetch(`${SLACK_API_BASE_URL}/${method}`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${slackToken}`,
+				"Content-Type": "application/x-www-form-urlencoded",
+			},
+			body,
+		});
+
+		if (!response.ok) {
+			return { ok: false, error: `Slack API HTTP ${response.status}: ${response.statusText}` };
+		}
+
+		const payload = (await response.json()) as unknown;
+		if (!isRecord(payload)) {
+			return { ok: false, error: "Invalid Slack API response shape" };
+		}
+
+		if (payload.ok !== true) {
+			const slackError = typeof payload.error === "string" ? payload.error : "unknown_error";
+			return { ok: false, error: `Slack API error (${method}): ${slackError}` };
+		}
+
+		return { ok: true, data: payload };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { ok: false, error: message };
+	}
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+	return typeof value === "object" && value !== null;
+}
+
+function getRequiredString(args: Record<string, unknown>, key: string): string {
+	const value = args[key];
+	if (typeof value !== "string" || value.length === 0) {
+		throw new Error(`Invalid or missing required argument: ${key}`);
+	}
+	return value;
+}
+
+function getOptionalString(args: Record<string, unknown>, key: string): string | undefined {
+	const value = args[key];
+	if (value === undefined) {
+		return undefined;
+	}
+	if (typeof value !== "string") {
+		throw new Error(`Invalid argument type for ${key}; expected string`);
+	}
+	return value;
+}
+
+function getOptionalNumber(args: Record<string, unknown>, key: string): number | undefined {
+	const value = args[key];
+	if (value === undefined) {
+		return undefined;
+	}
+	if (typeof value !== "number" || Number.isNaN(value)) {
+		throw new Error(`Invalid argument type for ${key}; expected number`);
+	}
+	return value;
+}
+
+interface UploadToSlackArgs {
+	channel: string;
+	filePath: string;
+	filename: string;
+	title: string;
+}
+
+interface UploadInitData {
+	uploadUrl: string;
+	fileId: string;
+}
+
+interface WaitForPathsArgs {
+	inputPaths: string[];
+	timeoutMs: number;
+	pollIntervalMs: number;
+}
+
+interface ResolvedPathTarget {
+	relative: string;
+	absolute: string;
+}
+
+function parseUploadToSlackArgs(args: Record<string, unknown>): UploadToSlackArgs {
+	const filePath = getRequiredString(args, "file_path");
+	const filename = getOptionalString(args, "filename") ?? path.basename(filePath);
+	return {
+		channel: getRequiredString(args, "channel"),
+		filePath,
+		filename,
+		title: getOptionalString(args, "title") ?? filename,
+	};
+}
+
+function parseUploadInitData(data: JsonRecord): UploadInitData {
+	const uploadUrl = typeof data.upload_url === "string" ? data.upload_url : undefined;
+	const fileId = typeof data.file_id === "string" ? data.file_id : undefined;
+	if (!uploadUrl || !fileId) {
+		throw new Error("Slack response missing upload_url or file_id");
+	}
+	return { uploadUrl, fileId };
+}
+
+async function uploadContentToSlack(uploadUrl: string, content: Buffer): Promise<void> {
+	const uploadResponse = await fetch(uploadUrl, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/octet-stream",
+		},
+		body: content,
+	});
+	if (!uploadResponse.ok) {
+		throw new Error(`Slack file upload failed with HTTP ${uploadResponse.status}`);
+	}
+}
+
+function extractUploadPermalink(data: JsonRecord): string {
+	if (isRecord(data.file) && typeof data.file.permalink === "string") {
+		return data.file.permalink;
+	}
+	if (Array.isArray(data.files) && data.files.length > 0) {
+		const first = data.files[0];
+		if (isRecord(first) && typeof first.permalink === "string") {
+			return first.permalink;
+		}
+	}
+	return "";
+}
+
+function parseWaitForPathsArgs(args: Record<string, unknown>): WaitForPathsArgs {
+	const rawPaths = args.paths;
+	if (!Array.isArray(rawPaths) || rawPaths.some((entry) => typeof entry !== "string")) {
+		throw new Error("Invalid or missing required argument: paths");
+	}
+	const timeoutMs = getOptionalNumber(args, "timeout_ms") ?? 30_000;
+	const pollIntervalMs = getOptionalNumber(args, "poll_interval_ms") ?? 500;
+	if (timeoutMs < 0 || pollIntervalMs <= 0) {
+		throw new Error("timeout_ms must be >= 0 and poll_interval_ms must be > 0");
+	}
+	return {
+		inputPaths: rawPaths as string[],
+		timeoutMs,
+		pollIntervalMs,
+	};
+}
+
+function resolveWaitForPathTargets(
+	workspaceDir: string,
+	inputPaths: string[],
+): ResolvedPathTarget[] {
+	return inputPaths.map((targetPath) => ({
+		relative: targetPath,
+		absolute: resolveSafePath(workspaceDir, targetPath),
+	}));
+}
+
+async function markFoundPaths(found: Set<string>, targets: ResolvedPathTarget[]): Promise<void> {
+	for (const target of targets) {
+		if (found.has(target.relative)) {
+			continue;
+		}
+		try {
+			await access(target.absolute);
+			found.add(target.relative);
+		} catch {}
+	}
+}
+
+function sleep(durationMs: number): Promise<void> {
+	return new Promise<void>((resolve) => {
+		setTimeout(resolve, durationMs);
+	});
+}
+
+async function waitForResolvedPathTargets(
+	targets: ResolvedPathTarget[],
+	timeoutMs: number,
+	pollIntervalMs: number,
+): Promise<{ found: Set<string>; elapsedMs: number }> {
+	const found = new Set<string>();
+	const start = Date.now();
+
+	while (Date.now() - start <= timeoutMs) {
+		await markFoundPaths(found, targets);
+		if (found.size === targets.length) {
+			break;
+		}
+		await sleep(pollIntervalMs);
+	}
+
+	return {
+		found,
+		elapsedMs: Date.now() - start,
+	};
+}
+function createCoworkerSlackHistoryExecutor(slackToken: string): ToolExecutor {
+	return async (args) => {
+		try {
+			const channel = getRequiredString(args, "channel");
+			const limit = getOptionalNumber(args, "limit") ?? 20;
+			const oldest = getOptionalString(args, "oldest");
+			const latest = getOptionalString(args, "latest");
+
+			const params: Record<string, string> = {
+				channel,
+				limit: String(limit),
+			};
+			if (oldest) {
+				params.oldest = oldest;
+			}
+			if (latest) {
+				params.latest = latest;
+			}
+
+			const apiResult = await slackApiCall(slackToken, "conversations.history", params);
+			if (!apiResult.ok) {
+				return { output: null, durationMs: 0, error: apiResult.error };
+			}
+
+			const rawMessages = Array.isArray(apiResult.data.messages) ? apiResult.data.messages : [];
+			const messages = rawMessages
+				.filter(
+					(message): message is Record<string, unknown> =>
+						isRecord(message) && typeof (message as Record<string, unknown>).ts === "string",
+				)
+				.map((message) => ({
+					ts: message.ts as string,
+					user: typeof message.user === "string" ? message.user : undefined,
+					text: typeof message.text === "string" ? message.text : undefined,
+					thread_ts: typeof message.thread_ts === "string" ? message.thread_ts : undefined,
+				}));
+
+			return {
+				output: {
+					messages,
+					has_more: apiResult.data.has_more === true,
+				},
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+
+function createCoworkerSendSlackMessageExecutor(slackToken: string): ToolExecutor {
+	return async (args) => {
+		try {
+			const channel = getRequiredString(args, "channel");
+			const text = getRequiredString(args, "text");
+			const threadTs = getOptionalString(args, "thread_ts");
+
+			const params: Record<string, string> = { channel, text };
+			if (threadTs) {
+				params.thread_ts = threadTs;
+			}
+
+			const apiResult = await slackApiCall(slackToken, "chat.postMessage", params);
+			if (!apiResult.ok) {
+				return { output: null, durationMs: 0, error: apiResult.error };
+			}
+
+			const ts = typeof apiResult.data.ts === "string" ? apiResult.data.ts : "";
+			const responseChannel =
+				typeof apiResult.data.channel === "string" ? apiResult.data.channel : channel;
+			if (!ts) {
+				return { output: null, durationMs: 0, error: "Slack response missing message timestamp" };
+			}
+
+			return {
+				output: { ts, channel: responseChannel },
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+
+function createCoworkerSlackReactExecutor(slackToken: string): ToolExecutor {
+	return async (args) => {
+		try {
+			const channel = getRequiredString(args, "channel");
+			const timestamp = getRequiredString(args, "timestamp");
+			const emoji = getRequiredString(args, "emoji");
+			if (emoji.includes(":")) {
+				return { output: null, durationMs: 0, error: "Emoji must not include colons" };
+			}
+
+			const apiResult = await slackApiCall(slackToken, "reactions.add", {
+				channel,
+				timestamp,
+				name: emoji,
+			});
+			if (!apiResult.ok) {
+				return { output: null, durationMs: 0, error: apiResult.error };
+			}
+
+			return {
+				output: { ok: true },
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+
+function createCoworkerDeleteSlackMessageExecutor(slackToken: string): ToolExecutor {
+	return async (args) => {
+		try {
+			const channel = getRequiredString(args, "channel");
+			const timestamp = getRequiredString(args, "timestamp");
+
+			const apiResult = await slackApiCall(slackToken, "chat.delete", {
+				channel,
+				ts: timestamp,
+			});
+			if (!apiResult.ok) {
+				return { output: null, durationMs: 0, error: apiResult.error };
+			}
+
+			return {
+				output: { ok: true },
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+
+function createCoworkerUploadToSlackExecutor(slackToken: string): ToolExecutor {
+	return async (args, ctx) => {
+		try {
+			const { channel, filePath, filename, title } = parseUploadToSlackArgs(args);
+			const absolutePath = resolveSafePath(ctx.workspaceDir, filePath);
+			const content = await readFile(absolutePath);
+
+			const initUpload = await slackApiCall(slackToken, "files.getUploadURLExternal", {
+				filename,
+				length: String(content.byteLength),
+			});
+			if (!initUpload.ok) {
+				return { output: null, durationMs: 0, error: initUpload.error };
+			}
+
+			const { uploadUrl, fileId } = parseUploadInitData(initUpload.data);
+			await uploadContentToSlack(uploadUrl, content);
+
+			const completeUpload = await slackApiCall(slackToken, "files.completeUploadExternal", {
+				files: JSON.stringify([{ id: fileId, title }]),
+				channel_id: channel,
+			});
+			if (!completeUpload.ok) {
+				return { output: null, durationMs: 0, error: completeUpload.error };
+			}
+
+			return {
+				output: {
+					file_id: fileId,
+					permalink: extractUploadPermalink(completeUpload.data),
+				},
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+function createCoworkerDownloadFromSlackExecutor(slackToken: string): ToolExecutor {
+	return async (args, ctx) => {
+		try {
+			const url = getRequiredString(args, "url");
+			const savePath = getRequiredString(args, "save_path");
+
+			const response = await fetch(url, {
+				headers: {
+					Authorization: `Bearer ${slackToken}`,
+				},
+			});
+			if (!response.ok) {
+				return {
+					output: null,
+					durationMs: 0,
+					error: `Download failed with HTTP ${response.status}: ${response.statusText}`,
+				};
+			}
+
+			const absolutePath = resolveSafePath(ctx.workspaceDir, savePath);
+			await mkdir(path.dirname(absolutePath), { recursive: true });
+			const bytes = Buffer.from(await response.arrayBuffer());
+			await writeFile(absolutePath, bytes);
+
+			return {
+				output: { bytes_written: bytes.byteLength, path: savePath },
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+
+function createCreateThreadExecutor(slackToken: string): ToolExecutor {
+	return async (args) => {
+		try {
+			const channel = getRequiredString(args, "channel");
+			const text = getRequiredString(args, "text");
+
+			const apiResult = await slackApiCall(slackToken, "chat.postMessage", {
+				channel,
+				text,
+			});
+			if (!apiResult.ok) {
+				return { output: null, durationMs: 0, error: apiResult.error };
+			}
+
+			const ts = typeof apiResult.data.ts === "string" ? apiResult.data.ts : "";
+			const responseChannel =
+				typeof apiResult.data.channel === "string" ? apiResult.data.channel : channel;
+			if (!ts) {
+				return { output: null, durationMs: 0, error: "Slack response missing message timestamp" };
+			}
+
+			return {
+				output: {
+					ts,
+					channel: responseChannel,
+					thread_ts: ts,
+				},
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+
+function createSendMessageToThreadExecutor(slackToken: string): ToolExecutor {
+	return async (args) => {
+		try {
+			const channel = getRequiredString(args, "channel");
+			const threadTs = getRequiredString(args, "thread_ts");
+			const text = getRequiredString(args, "text");
+
+			const apiResult = await slackApiCall(slackToken, "chat.postMessage", {
+				channel,
+				thread_ts: threadTs,
+				text,
+			});
+			if (!apiResult.ok) {
+				return { output: null, durationMs: 0, error: apiResult.error };
+			}
+
+			const ts = typeof apiResult.data.ts === "string" ? apiResult.data.ts : "";
+			const responseChannel =
+				typeof apiResult.data.channel === "string" ? apiResult.data.channel : channel;
+			if (!ts) {
+				return { output: null, durationMs: 0, error: "Slack response missing message timestamp" };
+			}
+
+			return {
+				output: {
+					ts,
+					channel: responseChannel,
+					thread_ts: threadTs,
+				},
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+
+function createWaitForPathsExecutor(): ToolExecutor {
+	return async (args, ctx: ToolExecutionContext) => {
+		try {
+			const { inputPaths, timeoutMs, pollIntervalMs } = parseWaitForPathsArgs(args);
+			const targets = resolveWaitForPathTargets(ctx.workspaceDir, inputPaths);
+			const { found, elapsedMs } = await waitForResolvedPathTargets(
+				targets,
+				timeoutMs,
+				pollIntervalMs,
+			);
+
+			const foundList = inputPaths.filter((targetPath) => found.has(targetPath));
+			const missingList = inputPaths.filter((targetPath) => !found.has(targetPath));
+
+			return {
+				output: {
+					found: foundList,
+					missing: missingList,
+					elapsed_ms: elapsedMs,
+				},
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+export function createSlackToolExecutors(slackToken: string): {
+	[key in SlackToolName]: ToolExecutor;
+} {
+	return {
+		coworker_slack_history: createCoworkerSlackHistoryExecutor(slackToken),
+		coworker_send_slack_message: createCoworkerSendSlackMessageExecutor(slackToken),
+		coworker_slack_react: createCoworkerSlackReactExecutor(slackToken),
+		coworker_delete_slack_message: createCoworkerDeleteSlackMessageExecutor(slackToken),
+		coworker_upload_to_slack: createCoworkerUploadToSlackExecutor(slackToken),
+		coworker_download_from_slack: createCoworkerDownloadFromSlackExecutor(slackToken),
+		create_thread: createCreateThreadExecutor(slackToken),
+		send_message_to_thread: createSendMessageToThreadExecutor(slackToken),
+		wait_for_paths: createWaitForPathsExecutor(),
+	};
+}

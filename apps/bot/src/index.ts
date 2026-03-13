@@ -6,8 +6,9 @@ import {
 	ToolGatewayClient,
 	createNativeRegistry,
 } from "@openviktor/tools";
-import type { ToolBackend } from "@openviktor/tools";
+import type { RegistryConfig, ToolBackend } from "@openviktor/tools";
 import { LLMGateway } from "./agent/gateway.js";
+import { AnthropicProvider } from "./agent/providers/anthropic.js";
 import { AgentRunner } from "./agent/runner.js";
 import {
 	createBotFilter,
@@ -24,7 +25,18 @@ function createToolBackend(config: ReturnType<typeof loadConfig>): {
 	backend: ToolBackend;
 	registry: ReturnType<typeof createNativeRegistry>;
 } {
-	const registry = createNativeRegistry();
+	const llmProvider = new AnthropicProvider(config.ANTHROPIC_API_KEY);
+	const registryConfig: RegistryConfig = {
+		slackToken: config.SLACK_BOT_TOKEN,
+		githubToken: config.GITHUB_TOKEN,
+		browserbaseApiKey: config.BROWSERBASE_API_KEY,
+		context7BaseUrl: config.CONTEXT7_BASE_URL,
+		searchApiKey: config.SEARCH_API_KEY,
+		imagenApiKey: config.IMAGEN_API_KEY,
+		llmProvider,
+		defaultModel: config.DEFAULT_MODEL,
+	};
+	const registry = createNativeRegistry(registryConfig);
 
 	if (config.TOOL_BACKEND === "modal") {
 		// MODAL_ENDPOINT_URL is validated as required by the config schema

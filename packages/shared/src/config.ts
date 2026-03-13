@@ -29,6 +29,11 @@ const envSchema = z
 		TOOL_TIMEOUT_MS: z.coerce.number().default(600_000),
 		AGENT_TIMEOUT_MS: z.coerce.number().default(300_000),
 		BASH_DEFAULT_TIMEOUT_MS: z.coerce.number().default(120_000),
+		GITHUB_TOKEN: z.string().optional(),
+		BROWSERBASE_API_KEY: z.string().optional(),
+		CONTEXT7_BASE_URL: z.string().url().optional(),
+		SEARCH_API_KEY: z.string().optional(),
+		IMAGEN_API_KEY: z.string().optional(),
 
 		// Tool gateway
 		TOOL_GATEWAY_PORT: z.coerce.number().default(3001),
