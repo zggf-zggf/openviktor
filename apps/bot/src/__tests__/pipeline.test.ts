@@ -116,7 +116,6 @@ describe("Pipeline: Agent → mrkdwn → Slack reply", () => {
 			},
 		});
 
-		// Runner returns raw LLM text — conversion happens in event handler
 		expect(result.responseText).toBe(llmMarkdown);
 		expect(result.agentRunId).toBe("run_1");
 		expect(result.threadId).toBe("thread_1");
@@ -140,7 +139,6 @@ describe("Pipeline: Agent → mrkdwn → Slack reply", () => {
 			},
 		});
 
-		// User message saved
 		expect(prisma.message.create).toHaveBeenCalledWith(
 			expect.objectContaining({
 				data: expect.objectContaining({
@@ -150,7 +148,6 @@ describe("Pipeline: Agent → mrkdwn → Slack reply", () => {
 			}),
 		);
 
-		// Assistant message saved
 		expect(prisma.message.create).toHaveBeenCalledWith(
 			expect.objectContaining({
 				data: expect.objectContaining({
@@ -160,7 +157,6 @@ describe("Pipeline: Agent → mrkdwn → Slack reply", () => {
 			}),
 		);
 
-		// Run marked completed
 		expect(prisma.agentRun.update).toHaveBeenCalledWith(
 			expect.objectContaining({
 				data: expect.objectContaining({

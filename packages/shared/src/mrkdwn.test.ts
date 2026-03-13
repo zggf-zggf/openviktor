@@ -30,7 +30,6 @@ describe("markdownToMrkdwn", () => {
 		});
 
 		it("does not convert multiplication like 2 * 3 * 4", () => {
-			// Space after opening * prevents match
 			expect(markdownToMrkdwn("2 * 3 * 4")).toBe("2 * 3 * 4");
 		});
 
@@ -246,6 +245,11 @@ describe("chunkMessage", () => {
 		expect(chunks).toHaveLength(2);
 		expect(chunks[0]).toBe("a".repeat(3000));
 		expect(chunks[1]).toBe("a".repeat(3000));
+	});
+
+	it("throws on non-positive maxLength", () => {
+		expect(() => chunkMessage("hello", 0)).toThrow("maxLength must be a positive integer");
+		expect(() => chunkMessage("hello", -1)).toThrow("maxLength must be a positive integer");
 	});
 
 	it("respects custom max length", () => {
