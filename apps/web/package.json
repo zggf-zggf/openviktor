@@ -1,13 +1,43 @@
 {
 	"name": "@openviktor/web",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "echo 'Web dashboard coming in Phase 7'",
-		"build": "echo 'Web dashboard coming in Phase 7'",
-		"typecheck": "echo 'Web dashboard coming in Phase 7'",
-		"test": "echo 'No tests yet'",
+		"dev": "concurrently -n api,web -c blue,green \"bun --watch server/index.ts\" \"vite\"",
+		"dev:api": "bun --watch server/index.ts",
+		"dev:client": "vite",
+		"build": "vite build",
+		"start": "NODE_ENV=production bun server/index.ts",
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
 		"clean": "rm -rf dist"
+	},
+	"dependencies": {
+		"@openviktor/db": "workspace:*",
+		"@tanstack/react-query": "^5.60.0",
+		"clsx": "^2.1.0",
+		"date-fns": "^4.1.0",
+		"hono": "^4.6.0",
+		"lucide-react": "^0.460.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0",
+		"react-router-dom": "^6.28.0",
+		"recharts": "^2.14.0",
+		"tailwind-merge": "^2.6.0"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "^4.0.0",
+		"@testing-library/react": "^16.1.0",
+		"@types/react": "^19.0.0",
+		"@types/react-dom": "^19.0.0",
+		"@vitejs/plugin-react": "^4.3.0",
+		"concurrently": "^9.1.0",
+		"jsdom": "^25.0.0",
+		"tailwindcss": "^4.0.0",
+		"typescript": "^5.8.0",
+		"vite": "^6.0.0",
+		"vitest": "^3.0.0"
 	}
 }

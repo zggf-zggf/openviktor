@@ -68,7 +68,7 @@ bun run dev
 openviktor/
 ├── apps/
 │   ├── bot/              # Slack bot + agent runtime
-│   └── web/              # Admin dashboard (Phase 12)
+│   └── web/              # Admin dashboard (Phase 7)
 ├── packages/
 │   ├── db/               # PostgreSQL schema (Prisma)
 │   ├── shared/           # Types, config, logger, errors
@@ -116,7 +116,7 @@ bun run typecheck          # TypeScript strict check
 | 4 | GitHub integration | Planned |
 | 5 | Linear integration | Planned |
 | 6 | Heartbeat & proactive monitoring | Planned |
-| 7 | Admin dashboard | Planned |
+| 7 | Admin dashboard | ✅ Done |
 
 ## Contributing
 

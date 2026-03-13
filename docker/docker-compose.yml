@@ -67,6 +67,21 @@ services:
     profiles:
       - dev
 
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://openviktor:${POSTGRES_PASSWORD:-openviktor_dev}@postgres:5432/openviktor
+    ports:
+      - "${WEB_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
