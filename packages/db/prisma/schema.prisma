@@ -52,6 +52,7 @@ model AgentRun {
   threadId     String?     @map("thread_id")
   triggeredBy  String?     @map("triggered_by")
   triggerType  TriggerType @map("trigger_type")
+  cronJobId    String?     @map("cron_job_id")
   status       RunStatus   @default(QUEUED)
   model        String      @default("claude-sonnet")
   systemPrompt String?     @map("system_prompt")
@@ -68,6 +69,7 @@ model AgentRun {
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   member    Member?    @relation(fields: [triggeredBy], references: [id])
   thread    Thread?    @relation(fields: [threadId], references: [id])
+  cronJob   CronJob?   @relation(fields: [cronJobId], references: [id])
   messages  Message[]
   toolCalls ToolCall[]
   learnings Learning[]
@@ -218,21 +220,32 @@ enum ThreadStatus {
 // ─── Cron & Scheduling ──────────────────────────────────
 
 model CronJob {
-  id              String    @id @default(cuid())
-  workspaceId     String    @map("workspace_id")
+  id              String       @id @default(cuid())
+  workspaceId     String       @map("workspace_id")
   name            String
   schedule        String
   description     String?
-  conditionScript String?   @map("condition_script")
-  agentPrompt     String    @map("agent_prompt")
-  costTier        Int       @default(1) @map("cost_tier")
-  enabled         Boolean   @default(true)
-  lastRunAt       DateTime? @map("last_run_at")
-  nextRunAt       DateTime? @map("next_run_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  conditionScript String?      @map("condition_script")
+  agentPrompt     String       @map("agent_prompt")
+  costTier        Int          @default(1) @map("cost_tier")
+  enabled         Boolean      @default(true)
+  type            CronJobType  @default(CUSTOM)
+  slackChannel    String?      @map("slack_channel")
+  lastRunAt       DateTime?    @map("last_run_at")
+  nextRunAt       DateTime?    @map("next_run_at")
+  runCount        Int          @default(0) @map("run_count")
+  lastRunStatus   RunStatus?   @map("last_run_status")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentRuns AgentRun[]
 
+  @@index([enabled, nextRunAt])
   @@map("cron_jobs")
+}
+
+enum CronJobType {
+  HEARTBEAT
+  CUSTOM
 }

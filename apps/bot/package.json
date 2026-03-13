@@ -18,7 +18,8 @@
 		"@openviktor/db": "workspace:*",
 		"@openviktor/shared": "workspace:*",
 		"@openviktor/tools": "workspace:*",
-		"@slack/bolt": "^3.22.0"
+		"@slack/bolt": "^3.22.0",
+		"cron-parser": "^5.5.0"
 	},
 	"devDependencies": {
 		"@vitest/coverage-v8": "3.2.4",

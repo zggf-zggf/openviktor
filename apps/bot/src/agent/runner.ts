@@ -24,8 +24,9 @@ const MAX_TOOL_ROUNDS = 20;
 
 export interface RunTrigger {
 	workspaceId: string;
-	memberId: string;
+	memberId: string | null;
 	triggerType: TriggerType;
+	cronJobId?: string;
 	slackChannel: string;
 	slackThreadTs: string;
 	userMessage: string;
@@ -59,6 +60,10 @@ export class AgentRunner {
 		this.toolConfig = toolConfig ?? null;
 	}
 
+	updateToolConfig(config: ToolConfig): void {
+		this.toolConfig = config;
+	}
+
 	async run(trigger: RunTrigger): Promise<RunResult> {
 		const startTime = Date.now();
 
@@ -87,6 +92,7 @@ export class AgentRunner {
 				threadId: thread.id,
 				triggeredBy: trigger.memberId,
 				triggerType: trigger.triggerType,
+				cronJobId: trigger.cronJobId ?? null,
 				model: this.llm.getModel(),
 				systemPrompt,
 				startedAt: new Date(),

@@ -12,6 +12,14 @@ import { LLMGateway } from "./agent/gateway.js";
 import { AnthropicProvider } from "./agent/providers/anthropic.js";
 import { AgentRunner } from "./agent/runner.js";
 import {
+	CronScheduler,
+	createCronJobDefinition,
+	createCronToolExecutors,
+	deleteCronJobDefinition,
+	listCronJobsDefinition,
+	triggerCronJobDefinition,
+} from "./cron/index.js";
+import {
 	createBotFilter,
 	createDeduplicator,
 	createSlackApp,
@@ -94,6 +102,29 @@ async function main(): Promise<void> {
 		tools: registry.getDefinitions(),
 	});
 
+	// ─── Cron Scheduler ────────────────────────────────────
+	const scheduler = new CronScheduler(prisma, runner, createLogger("cron-scheduler"), {
+		checkIntervalMs: config.CRON_CHECK_INTERVAL_MS,
+		heartbeatEnabled: config.HEARTBEAT_ENABLED,
+		slackToken: config.SLACK_BOT_TOKEN,
+		defaultModel: config.DEFAULT_MODEL,
+	});
+
+	// Register cron CRUD tools
+	const cronTools = createCronToolExecutors(prisma, scheduler);
+	registry.register("create_cron_job", createCronJobDefinition, cronTools.create_cron_job);
+	registry.register("delete_cron_job", deleteCronJobDefinition, cronTools.delete_cron_job);
+	registry.register("trigger_cron_job", triggerCronJobDefinition, cronTools.trigger_cron_job);
+	registry.register("list_cron_jobs", listCronJobsDefinition, cronTools.list_cron_jobs);
+
+	// Update runner's tool list to include cron tools
+	runner.updateToolConfig({
+		client: gatewayClient,
+		tools: registry.getDefinitions(),
+	});
+
+	scheduler.start();
+
 	const app = createSlackApp(config);
 
 	app.use(createDeduplicator());
@@ -105,6 +136,7 @@ async function main(): Promise<void> {
 
 	const shutdown = async () => {
 		logger.info("Shutting down");
+		scheduler.stop();
 		gatewayServer.stop();
 		await app.stop();
 		await prisma.$disconnect();

@@ -42,6 +42,13 @@ const envSchema = z
 		TOOL_BACKEND: z.enum(["local", "modal"]).default("local"),
 		MODAL_ENDPOINT_URL: z.string().url().optional(),
 		MODAL_AUTH_TOKEN: z.string().min(1).optional(),
+
+		// Cron scheduler
+		CRON_CHECK_INTERVAL_MS: z.coerce.number().default(30_000),
+		HEARTBEAT_ENABLED: z
+			.enum(["true", "false"])
+			.default("true")
+			.transform((v) => v === "true"),
 	})
 	.superRefine((data, ctx) => {
 		if (data.TOOL_BACKEND === "modal" && !data.MODAL_ENDPOINT_URL) {
