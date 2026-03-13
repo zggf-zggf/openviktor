@@ -35,6 +35,18 @@ async function resolveContext(
 	return { workspace, member };
 }
 
+async function fetchSkillCatalog(prisma: PrismaClient, workspaceId: string): Promise<string[]> {
+	const skills = await prisma.skill.findMany({
+		where: { workspaceId },
+		select: { name: true, description: true, version: true },
+		orderBy: { name: "asc" },
+	});
+	return skills.map((s) => {
+		const desc = s.description ? ` — ${s.description}` : "";
+		return `${s.name} (v${s.version})${desc}`;
+	});
+}
+
 async function isBotInThread(
 	prisma: PrismaClient,
 	teamId: string,
@@ -79,6 +91,8 @@ async function handleMessage(
 
 	const triggerType = isDm ? "DM" : "MENTION";
 
+	const skillCatalog = await fetchSkillCatalog(ctx.prisma, workspace.id);
+
 	const result = await ctx.runner.run({
 		workspaceId: workspace.id,
 		memberId: member.id,
@@ -91,6 +105,7 @@ async function handleMessage(
 			channel: msg.channel,
 			triggerType,
 			userName: member.displayName ?? undefined,
+			skillCatalog,
 		},
 	});
 
@@ -153,6 +168,17 @@ export function registerEventHandlers(app: App, ctx: BotContext): void {
 				botUserId,
 				slackUser,
 			);
+
+			const skills = await ctx.prisma.skill.findMany({
+				where: { workspaceId: workspace.id },
+				select: { name: true, description: true, version: true },
+				orderBy: { name: "asc" },
+			});
+			const skillCatalog = skills.map((s) => {
+				const desc = s.description ? ` — ${s.description}` : "";
+				return `${s.name} (v${s.version})${desc}`;
+			});
+
 			const result = await ctx.runner.run({
 				workspaceId: workspace.id,
 				memberId: member.id,
@@ -165,6 +191,7 @@ export function registerEventHandlers(app: App, ctx: BotContext): void {
 					channel: event.channel,
 					triggerType: "MENTION",
 					userName: member.displayName ?? undefined,
+					skillCatalog,
 				},
 			});
 

@@ -5,6 +5,7 @@ import {
 	ModalToolBackend,
 	ToolGatewayClient,
 	createNativeRegistry,
+	registerDbTools,
 } from "@openviktor/tools";
 import type { RegistryConfig, ToolBackend } from "@openviktor/tools";
 import { LLMGateway } from "./agent/gateway.js";
@@ -37,6 +38,7 @@ function createToolBackend(config: ReturnType<typeof loadConfig>): {
 		defaultModel: config.DEFAULT_MODEL,
 	};
 	const registry = createNativeRegistry(registryConfig);
+	registerDbTools(registry, prisma);
 
 	if (config.TOOL_BACKEND === "modal") {
 		// MODAL_ENDPOINT_URL is validated as required by the config schema
