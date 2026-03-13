@@ -49,4 +49,33 @@ describe("buildSystemPrompt", () => {
 		expect(prompt).toContain("## Guidelines");
 		expect(prompt).toContain("Format responses using Markdown");
 	});
+
+	it("includes startup instructions for read_learnings", () => {
+		const prompt = buildSystemPrompt(makeContext());
+		expect(prompt).toContain("## Startup");
+		expect(prompt).toContain("read_learnings");
+		expect(prompt).toContain("write_learning");
+	});
+
+	it("includes skill catalog when provided", () => {
+		const prompt = buildSystemPrompt(
+			makeContext({
+				skillCatalog: ["team (v2) — Team profiles", "company (v1) — Company context"],
+			}),
+		);
+		expect(prompt).toContain("## Skills");
+		expect(prompt).toContain("read_skill");
+		expect(prompt).toContain("team (v2) — Team profiles");
+		expect(prompt).toContain("company (v1) — Company context");
+	});
+
+	it("omits skills section when catalog is empty", () => {
+		const prompt = buildSystemPrompt(makeContext({ skillCatalog: [] }));
+		expect(prompt).not.toContain("## Skills");
+	});
+
+	it("omits skills section when catalog is undefined", () => {
+		const prompt = buildSystemPrompt(makeContext());
+		expect(prompt).not.toContain("## Skills");
+	});
 });

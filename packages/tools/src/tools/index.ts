@@ -1,3 +1,4 @@
+import type { PrismaClient } from "@openviktor/db";
 import type { LLMProvider } from "@openviktor/shared";
 import { ToolRegistry } from "../registry.js";
 import {
@@ -28,7 +29,21 @@ import { fileWriteDefinition, fileWriteExecutor } from "./file-write.js";
 import { coworkerGitDefinition, coworkerGithubCliDefinition, createGitExecutors } from "./git.js";
 import { globDefinition, globExecutor } from "./glob.js";
 import { grepDefinition, grepExecutor } from "./grep.js";
+import {
+	createReadLearningsExecutor,
+	createWriteLearningExecutor,
+	readLearningsDefinition,
+	writeLearningDefinition,
+} from "./learnings.js";
 import { createQuickAiSearchExecutor, quickAiSearchDefinition } from "./quick-ai-search.js";
+import {
+	createListSkillsExecutor,
+	createReadSkillExecutor,
+	createWriteSkillExecutor,
+	listSkillsDefinition,
+	readSkillDefinition,
+	writeSkillDefinition,
+} from "./skills.js";
 import {
 	coworkerGetSlackReactionsDefinition,
 	coworkerInviteSlackUserToTeamDefinition,
@@ -239,4 +254,12 @@ export function createNativeRegistry(config: RegistryConfig = {}): ToolRegistry 
 	);
 
 	return registry;
+}
+
+export function registerDbTools(registry: ToolRegistry, prisma: PrismaClient): void {
+	registry.register("read_learnings", readLearningsDefinition, createReadLearningsExecutor(prisma));
+	registry.register("write_learning", writeLearningDefinition, createWriteLearningExecutor(prisma));
+	registry.register("read_skill", readSkillDefinition, createReadSkillExecutor(prisma));
+	registry.register("list_skills", listSkillsDefinition, createListSkillsExecutor(prisma));
+	registry.register("write_skill", writeSkillDefinition, createWriteSkillExecutor(prisma));
 }

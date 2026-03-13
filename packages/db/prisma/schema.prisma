@@ -70,6 +70,7 @@ model AgentRun {
   thread    Thread?    @relation(fields: [threadId], references: [id])
   messages  Message[]
   toolCalls ToolCall[]
+  learnings Learning[]
 
   @@index([workspaceId, createdAt])
   @@index([status])
@@ -157,12 +158,14 @@ model ToolDefinition {
 model Learning {
   id          String   @id @default(cuid())
   workspaceId String   @map("workspace_id")
+  agentRunId  String?  @map("agent_run_id")
   content     String
   source      String
   category    String?
   createdAt   DateTime @default(now()) @map("created_at")
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentRun  AgentRun? @relation(fields: [agentRunId], references: [id])
 
   @@index([workspaceId, createdAt])
   @@map("learnings")
@@ -172,6 +175,7 @@ model Skill {
   id          String   @id @default(cuid())
   workspaceId String   @map("workspace_id")
   name        String
+  description String?
   content     String
   version     Int      @default(1)
   createdAt   DateTime @default(now()) @map("created_at")

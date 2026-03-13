@@ -11,5 +11,5 @@ export {
 	resolveSafePathStrict,
 	workspaceExists,
 } from "./workspace.js";
-export { createNativeRegistry } from "./tools/index.js";
+export { createNativeRegistry, registerDbTools } from "./tools/index.js";
 export type { RegistryConfig } from "./tools/index.js";

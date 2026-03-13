@@ -12,6 +12,7 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
+		"@openviktor/db": "workspace:*",
 		"@openviktor/shared": "workspace:*"
 	},
 	"devDependencies": {
