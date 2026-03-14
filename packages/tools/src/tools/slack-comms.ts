@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { LLMToolDefinition } from "@openviktor/shared";
 import { markdownToMrkdwn } from "@openviktor/shared";
-import type { ToolExecutionContext, ToolExecutor } from "../registry.js";
+import type { ToolExecutor } from "../registry.js";
 import { resolveSafePath } from "../workspace.js";
 
 type SlackToolName =
@@ -787,35 +787,6 @@ function createSendMessageToThreadExecutor(slackToken: string): ToolExecutor {
 					ts,
 					channel: responseChannel,
 					thread_ts: threadTs,
-				},
-				durationMs: 0,
-			};
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return { output: null, durationMs: 0, error: message };
-		}
-	};
-}
-
-function createWaitForPathsExecutor(): ToolExecutor {
-	return async (args, ctx: ToolExecutionContext) => {
-		try {
-			const { inputPaths, timeoutMs, pollIntervalMs } = parseWaitForPathsArgs(args);
-			const targets = resolveWaitForPathTargets(ctx.workspaceDir, inputPaths);
-			const { found, elapsedMs } = await waitForResolvedPathTargets(
-				targets,
-				timeoutMs,
-				pollIntervalMs,
-			);
-
-			const foundList = inputPaths.filter((targetPath) => found.has(targetPath));
-			const missingList = inputPaths.filter((targetPath) => !found.has(targetPath));
-
-			return {
-				output: {
-					found: foundList,
-					missing: missingList,
-					elapsed_ms: elapsedMs,
 				},
 				durationMs: 0,
 			};
