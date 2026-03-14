@@ -86,6 +86,18 @@ export interface ToolConfig {
 	tools: LLMToolDefinition[];
 }
 
+export interface ProgressUpdate {
+	phase: "tool_start" | "tool_complete";
+	toolName: string;
+	round: number;
+}
+
+export type ProgressCallback = (update: ProgressUpdate) => void;
+
+export interface RunCallbacks {
+	onProgress?: ProgressCallback;
+}
+
 export interface OrchestratorConfig {
 	concurrencyLimiter: ConcurrencyLimiter;
 	threadLock: ThreadLock;
@@ -139,7 +151,7 @@ export class AgentRunner {
 		return messages;
 	}
 
-	async run(trigger: RunTrigger): Promise<RunResult> {
+	async run(trigger: RunTrigger, callbacks?: RunCallbacks): Promise<RunResult> {
 		const startTime = Date.now();
 
 		const thread = await this.prisma.thread.upsert({
@@ -208,6 +220,7 @@ export class AgentRunner {
 				trigger.model,
 				trigger.slackChannel,
 				trigger.slackThreadTs,
+				callbacks,
 			);
 
 			const inputTokens = executeResult.inputTokens + (summaryUsage?.inputTokens ?? 0);
@@ -462,6 +475,7 @@ export class AgentRunner {
 		modelOverride?: string,
 		slackChannel?: string,
 		slackThreadTs?: string,
+		callbacks?: RunCallbacks,
 	): Promise<{
 		responseText: string;
 		messageSent: boolean;
@@ -519,6 +533,8 @@ export class AgentRunner {
 				toolUses,
 				agentRunId,
 				threadId,
+				round,
+				callbacks,
 				slackChannel,
 				slackThreadTs,
 			);
@@ -560,6 +576,8 @@ export class AgentRunner {
 		toolUses: ToolUseBlock[],
 		agentRunId: string,
 		threadId: string,
+		round: number,
+		callbacks?: RunCallbacks,
 		slackChannel?: string,
 		slackThreadTs?: string,
 	): Promise<{
@@ -575,6 +593,7 @@ export class AgentRunner {
 			if (SEND_TOOL_NAMES.has(toolUse.name)) {
 				sentMessage = true;
 			}
+			callbacks?.onProgress?.({ phase: "tool_start", toolName: toolUse.name, round });
 			const { block, rawOutput } = await this.executeToolWithOutput(
 				toolUse,
 				agentRunId,
@@ -582,6 +601,7 @@ export class AgentRunner {
 				slackChannel,
 				slackThreadTs,
 			);
+			callbacks?.onProgress?.({ phase: "tool_complete", toolName: toolUse.name, round });
 			toolResults.push(block);
 			hotLoadedTools.push(...this.extractHotLoadedTools(toolUse, rawOutput, agentRunId));
 		}
