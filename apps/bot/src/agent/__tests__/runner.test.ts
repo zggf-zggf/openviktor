@@ -641,6 +641,102 @@ describe("AgentRunner", () => {
 		expect(round2Options.tools[0].name).toBe("read_skill");
 	});
 
+	it("sets messageSent=false when agent does not call a send tool", async () => {
+		mockChat.mockResolvedValue(makeResponse());
+
+		const result = await runner.run(makeTrigger());
+
+		expect(result.messageSent).toBe(false);
+	});
+
+	it("sets messageSent=true when agent calls coworker_send_slack_message", async () => {
+		const mockClient = {
+			call: vi.fn().mockResolvedValue({
+				output: { ts: "1234.5678", channel: "C12345" },
+				durationMs: 10,
+			}),
+		};
+
+		const toolRunner = new AgentRunner(
+			prisma as never,
+			{ chat: mockChat, getModel: mockGetModel } as never,
+			logger as never,
+			{
+				client: mockClient as never,
+				tools: [
+					{
+						name: "coworker_send_slack_message",
+						description: "Send message",
+						input_schema: { type: "object" },
+					},
+				],
+			},
+		);
+
+		const toolUseResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [
+				{
+					type: "tool_use",
+					id: "tool_1",
+					name: "coworker_send_slack_message",
+					input: { channel: "C12345", text: "Hello" },
+				},
+			],
+		});
+		const finalResponse = makeResponse({
+			content: [{ type: "text", text: "" }],
+		});
+		mockChat.mockResolvedValueOnce(toolUseResponse).mockResolvedValueOnce(finalResponse);
+
+		const result = await toolRunner.run(makeTrigger());
+
+		expect(result.messageSent).toBe(true);
+	});
+
+	it("invokes onProgress callback during tool execution", async () => {
+		const mockClient = {
+			call: vi.fn().mockResolvedValue({
+				output: { stdout: "ok" },
+				durationMs: 5,
+			}),
+		};
+
+		const toolRunner = new AgentRunner(
+			prisma as never,
+			{ chat: mockChat, getModel: mockGetModel } as never,
+			logger as never,
+			{
+				client: mockClient as never,
+				tools: [{ name: "bash", description: "Run shell", input_schema: { type: "object" } }],
+			},
+		);
+
+		const toolUseResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [{ type: "tool_use", id: "tool_1", name: "bash", input: { command: "echo hi" } }],
+		});
+		const finalResponse = makeResponse({
+			content: [{ type: "text", text: "Done" }],
+		});
+		mockChat.mockResolvedValueOnce(toolUseResponse).mockResolvedValueOnce(finalResponse);
+
+		const onProgress = vi.fn();
+		await toolRunner.run(makeTrigger(), { onProgress });
+
+		expect(onProgress).toHaveBeenCalledTimes(2);
+		expect(onProgress).toHaveBeenCalledWith({
+			phase: "tool_start",
+			toolName: "bash",
+			round: 0,
+		});
+		expect(onProgress).toHaveBeenCalledWith({
+			phase: "tool_complete",
+			toolName: "bash",
+			round: 0,
+		});
+	});
+
 	it("falls back to truncation when summary generation fails", async () => {
 		const history = makeHistoryMessages(25);
 		prisma.message.findMany.mockResolvedValue(history);

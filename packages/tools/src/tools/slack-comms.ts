@@ -1,6 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { LLMToolDefinition } from "@openviktor/shared";
+import { markdownToMrkdwn } from "@openviktor/shared";
 import type { ToolExecutionContext, ToolExecutor } from "../registry.js";
 import { resolveSafePath } from "../workspace.js";
 
