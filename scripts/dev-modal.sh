@@ -40,15 +40,13 @@ secret_output=$(modal secret list 2>&1) || {
   exit 1
 }
 if ! echo "$secret_output" | grep -q "openviktor-tools"; then
-  echo "Modal secret 'openviktor-tools' not found."
-  echo ""
-  read -rsp "Enter a TOOL_TOKEN for authenticating requests: " token
-  echo ""
+  echo "Modal secret 'openviktor-tools' not found — creating from .env..."
+  token=$(grep -oP '^MODAL_AUTH_TOKEN=\K.+' .env 2>/dev/null || true)
   if [ -z "$token" ]; then
-    echo "Error: token cannot be empty."
+    echo "Error: MODAL_AUTH_TOKEN not set in .env"
     exit 1
   fi
-  modal secret create openviktor-tools "TOOL_TOKEN=$token"
+  modal secret create openviktor-tools "TOOL_TOKEN=$token" 2>/dev/null || true
   unset token
   echo ""
 fi

@@ -19,12 +19,15 @@ model Workspace {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  members   Member[]
-  agentRuns AgentRun[]
-  cronJobs  CronJob[]
-  learnings Learning[]
-  skills    Skill[]
-  threads   Thread[]
+  members             Member[]
+  agentRuns            AgentRun[]
+  cronJobs             CronJob[]
+  learnings            Learning[]
+  skills               Skill[]
+  threads              Thread[]
+  integrationAccounts  IntegrationAccount[]
+  permissionRequests   PermissionRequest[]
+  toolDefinitions      ToolDefinition[]
 
   @@map("workspaces")
 }
@@ -70,9 +73,10 @@ model AgentRun {
   member    Member?    @relation(fields: [triggeredBy], references: [id])
   thread    Thread?    @relation(fields: [threadId], references: [id])
   cronJob   CronJob?   @relation(fields: [cronJobId], references: [id])
-  messages  Message[]
-  toolCalls ToolCall[]
-  learnings Learning[]
+  messages           Message[]
+  toolCalls          ToolCall[]
+  learnings          Learning[]
+  permissionRequests PermissionRequest[]
 
   @@index([workspaceId, createdAt])
   @@index([status])
@@ -143,7 +147,8 @@ enum ToolType {
 
 model ToolDefinition {
   id          String   @id @default(cuid())
-  name        String   @unique
+  workspaceId String   @map("workspace_id")
+  name        String
   description String
   type        ToolType
   schema      Json
@@ -153,6 +158,10 @@ model ToolDefinition {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, type])
   @@map("tool_definitions")
 }
 
@@ -255,4 +264,59 @@ enum CronJobType {
   HEARTBEAT
   DISCOVERY
   CUSTOM
+}
+
+// ─── Integrations ──────────────────────────────────────
+
+model IntegrationAccount {
+  id              String            @id @default(cuid())
+  workspaceId     String            @map("workspace_id")
+  provider        String            @default("pipedream")
+  appSlug         String            @map("app_slug")
+  appName         String            @map("app_name")
+  authProvisionId String            @map("auth_provision_id")
+  externalUserId  String            @map("external_user_id")
+  status          IntegrationStatus @default(ACTIVE)
+  connectedAt     DateTime          @default(now()) @map("connected_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, provider, authProvisionId])
+  @@index([workspaceId, provider])
+  @@map("integration_accounts")
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  REVOKED
+}
+
+model PermissionRequest {
+  id             String           @id @default(cuid())
+  workspaceId    String           @map("workspace_id")
+  agentRunId     String           @map("agent_run_id")
+  toolName       String           @map("tool_name")
+  toolInput      Json             @map("tool_input")
+  status         PermissionStatus @default(PENDING)
+  slackChannel   String?          @map("slack_channel")
+  slackMessageTs String?          @map("slack_message_ts")
+  approvedBy     String?          @map("approved_by")
+  approvalCode   String?          @map("approval_code") @unique
+  expiresAt      DateTime         @map("expires_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  resolvedAt     DateTime?        @map("resolved_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentRun  AgentRun  @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@map("permission_requests")
+}
+
+enum PermissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
 }

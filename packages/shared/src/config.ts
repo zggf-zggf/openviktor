@@ -52,6 +52,18 @@ const envSchema = z
 			.enum(["true", "false"])
 			.default("true")
 			.transform((v) => v === "true"),
+
+		// Pipedream Connect
+		PIPEDREAM_CLIENT_ID: z.string().optional(),
+		PIPEDREAM_CLIENT_SECRET: z.string().optional(),
+		PIPEDREAM_PROJECT_ID: z.string().optional(),
+		PIPEDREAM_ENVIRONMENT: z.enum(["development", "production"]).default("development"),
+
+		// Permissions
+		DANGEROUSLY_SKIP_PERMISSIONS: z
+			.enum(["true", "false"])
+			.default("false")
+			.transform((v) => v === "true"),
 	})
 	.superRefine((data, ctx) => {
 		if (data.TOOL_BACKEND === "modal" && !data.MODAL_ENDPOINT_URL) {
@@ -59,6 +71,20 @@ const envSchema = z
 				code: z.ZodIssueCode.custom,
 				message: "MODAL_ENDPOINT_URL is required when TOOL_BACKEND=modal",
 				path: ["MODAL_ENDPOINT_URL"],
+			});
+		}
+		const pdFields = [
+			data.PIPEDREAM_CLIENT_ID,
+			data.PIPEDREAM_CLIENT_SECRET,
+			data.PIPEDREAM_PROJECT_ID,
+		];
+		const pdSet = pdFields.filter(Boolean).length;
+		if (pdSet > 0 && pdSet < 3) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message:
+					"All three PIPEDREAM_CLIENT_ID, PIPEDREAM_CLIENT_SECRET, and PIPEDREAM_PROJECT_ID must be set together",
+				path: ["PIPEDREAM_CLIENT_ID"],
 			});
 		}
 	});

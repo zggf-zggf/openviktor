@@ -497,6 +497,144 @@ describe("AgentRunner", () => {
 		expect(chatCall[0].content).toContain("Cached summary from before.");
 	});
 
+	it("hot-loads tool schemas after read_skill returns integration skill", async () => {
+		const skillContent = [
+			"## Available Tools",
+			"### mcp_pd_sheets_add_row",
+			"Add a row",
+			"---TOOL_SCHEMAS---",
+			JSON.stringify([
+				{
+					name: "mcp_pd_sheets_add_row",
+					description: "Add a row to Google Sheets",
+					input_schema: { type: "object", properties: { data: { type: "string" } } },
+				},
+			]),
+			"---END_TOOL_SCHEMAS---",
+		].join("\n");
+
+		const mockClient = {
+			call: vi.fn().mockImplementation((name: string) => {
+				if (name === "read_skill") {
+					return {
+						output: { name: "pd_google_sheets", content: skillContent, version: 1 },
+						durationMs: 5,
+					};
+				}
+				if (name === "mcp_pd_sheets_add_row") {
+					return {
+						output: { success: true },
+						durationMs: 10,
+					};
+				}
+				return { output: null, durationMs: 0, error: "Unknown" };
+			}),
+		};
+
+		const toolRunner = new AgentRunner(
+			prisma as never,
+			{ chat: mockChat, getModel: mockGetModel } as never,
+			logger as never,
+			{
+				client: mockClient as never,
+				tools: [
+					{ name: "read_skill", description: "Read skill", input_schema: { type: "object" } },
+				],
+			},
+		);
+
+		// Round 1: LLM calls read_skill
+		const readSkillResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [
+				{
+					type: "tool_use",
+					id: "tool_1",
+					name: "read_skill",
+					input: { name: "pd_google_sheets" },
+				},
+			],
+		});
+		// Round 2: LLM calls the hot-loaded tool
+		const useToolResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [
+				{
+					type: "tool_use",
+					id: "tool_2",
+					name: "mcp_pd_sheets_add_row",
+					input: { data: "test" },
+				},
+			],
+		});
+		// Round 3: Final response
+		const finalResponse = makeResponse({
+			content: [{ type: "text", text: "Row added successfully!" }],
+		});
+		mockChat
+			.mockResolvedValueOnce(readSkillResponse)
+			.mockResolvedValueOnce(useToolResponse)
+			.mockResolvedValueOnce(finalResponse);
+
+		const result = await toolRunner.run(makeTrigger());
+
+		expect(result.responseText).toBe("Row added successfully!");
+		expect(mockChat).toHaveBeenCalledTimes(3);
+
+		// Verify round 2 chat was called with hot-loaded tool in tools[]
+		const round2Options = mockChat.mock.calls[1][1];
+		const toolNames = round2Options.tools.map((t: { name: string }) => t.name);
+		expect(toolNames).toContain("read_skill");
+		expect(toolNames).toContain("mcp_pd_sheets_add_row");
+
+		// Verify the hot-loaded tool was actually executed
+		expect(mockClient.call).toHaveBeenCalledWith("mcp_pd_sheets_add_row", { data: "test" });
+	});
+
+	it("does not hot-load for non-integration skills", async () => {
+		const mockClient = {
+			call: vi.fn().mockResolvedValue({
+				output: { name: "my_custom_skill", content: "Just text, no schemas", version: 1 },
+				durationMs: 5,
+			}),
+		};
+
+		const toolRunner = new AgentRunner(
+			prisma as never,
+			{ chat: mockChat, getModel: mockGetModel } as never,
+			logger as never,
+			{
+				client: mockClient as never,
+				tools: [
+					{ name: "read_skill", description: "Read skill", input_schema: { type: "object" } },
+				],
+			},
+		);
+
+		const readSkillResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [
+				{
+					type: "tool_use",
+					id: "tool_1",
+					name: "read_skill",
+					input: { name: "my_custom_skill" },
+				},
+			],
+		});
+		const finalResponse = makeResponse({
+			content: [{ type: "text", text: "Done" }],
+		});
+		mockChat.mockResolvedValueOnce(readSkillResponse).mockResolvedValueOnce(finalResponse);
+
+		await toolRunner.run(makeTrigger());
+
+		// Round 2 should still only have the original tool
+		const round2Options = mockChat.mock.calls[1][1];
+		expect(round2Options.tools).toHaveLength(1);
+		expect(round2Options.tools[0].name).toBe("read_skill");
+	});
+
 	it("falls back to truncation when summary generation fails", async () => {
 		const history = makeHistoryMessages(25);
 		prisma.message.findMany.mockResolvedValue(history);

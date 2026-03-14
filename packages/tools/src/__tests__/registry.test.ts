@@ -131,6 +131,98 @@ describe("ToolRegistry", () => {
 		expect(result.error).toBe("boom");
 	});
 
+	it("excludes discoverable tools from getDefinitions()", () => {
+		registry.register(
+			"core",
+			{ name: "core", description: "Core", input_schema: {} },
+			echoExecutor,
+		);
+		registry.register(
+			"disco",
+			{ name: "disco", description: "Disco", input_schema: {} },
+			echoExecutor,
+			{ discoverable: true },
+		);
+
+		const coreDefs = registry.getDefinitions();
+		expect(coreDefs).toHaveLength(1);
+		expect(coreDefs[0].name).toBe("core");
+	});
+
+	it("includes discoverable tools in getAllDefinitions()", () => {
+		registry.register(
+			"core",
+			{ name: "core", description: "Core", input_schema: {} },
+			echoExecutor,
+		);
+		registry.register(
+			"disco",
+			{ name: "disco", description: "Disco", input_schema: {} },
+			echoExecutor,
+			{ discoverable: true },
+		);
+
+		const allDefs = registry.getAllDefinitions();
+		expect(allDefs).toHaveLength(2);
+		expect(allDefs.map((d) => d.name)).toEqual(["core", "disco"]);
+	});
+
+	it("returns only discoverable tools from getDiscoverableDefinitions()", () => {
+		registry.register(
+			"core",
+			{ name: "core", description: "Core", input_schema: {} },
+			echoExecutor,
+		);
+		registry.register(
+			"mcp_pd_sheets_add",
+			{ name: "mcp_pd_sheets_add", description: "Add", input_schema: {} },
+			echoExecutor,
+			{ discoverable: true },
+		);
+		registry.register(
+			"mcp_pd_linear_create",
+			{ name: "mcp_pd_linear_create", description: "Create", input_schema: {} },
+			echoExecutor,
+			{ discoverable: true },
+		);
+
+		const all = registry.getDiscoverableDefinitions();
+		expect(all).toHaveLength(2);
+
+		const filtered = registry.getDiscoverableDefinitions("mcp_pd_sheets_");
+		expect(filtered).toHaveLength(1);
+		expect(filtered[0].name).toBe("mcp_pd_sheets_add");
+	});
+
+	it("executes discoverable tools normally", async () => {
+		registry.register(
+			"disco",
+			{ name: "disco", description: "Disco", input_schema: {} },
+			echoExecutor,
+			{ discoverable: true },
+		);
+		const result = await registry.execute("disco", { message: "hi" }, makeCtx());
+		expect(result.output).toEqual({ echoed: "hi" });
+		expect(result.error).toBeUndefined();
+	});
+
+	it("reports isDiscoverable correctly", () => {
+		registry.register(
+			"core",
+			{ name: "core", description: "Core", input_schema: {} },
+			echoExecutor,
+		);
+		registry.register(
+			"disco",
+			{ name: "disco", description: "Disco", input_schema: {} },
+			echoExecutor,
+			{ discoverable: true },
+		);
+		expect(registry.isDiscoverable("core")).toBe(false);
+		expect(registry.isDiscoverable("disco")).toBe(true);
+		expect(registry.isDiscoverable("nonexistent")).toBe(false);
+	});
+
 	it("enforces timeout on slow executors", async () => {
 		const slowExecutor: ToolExecutor = async () => {
 			await new Promise((resolve) => setTimeout(resolve, 5_000));

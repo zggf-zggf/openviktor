@@ -9,6 +9,7 @@ type SlackToolName =
 	| "coworker_send_slack_message"
 	| "coworker_slack_react"
 	| "coworker_delete_slack_message"
+	| "coworker_update_slack_message"
 	| "coworker_upload_to_slack"
 	| "coworker_download_from_slack"
 	| "create_thread"
@@ -46,13 +47,20 @@ export const coworkerSlackHistoryDefinition: LLMToolDefinition = {
 
 export const coworkerSendSlackMessageDefinition: LLMToolDefinition = {
 	name: "coworker_send_slack_message",
-	description: "Send a Slack message to a channel or thread.",
+	description:
+		"Send a Slack message to a channel or thread. Supports Block Kit for rich formatting.",
 	input_schema: {
 		type: "object",
 		properties: {
 			channel: { type: "string", description: "Slack channel ID" },
-			text: { type: "string", description: "Message text" },
-			thread_ts: { type: "string", description: "Thread timestamp" },
+			text: { type: "string", description: "Message text (also serves as fallback for blocks)" },
+			thread_ts: { type: "string", description: "Thread timestamp (omit for top-level messages)" },
+			blocks: {
+				type: "array",
+				description:
+					"Optional Block Kit blocks for rich formatting (sections, headers, dividers, images). When provided, text becomes the fallback.",
+				items: { type: "object" },
+			},
 		},
 		required: ["channel", "text"],
 	},
@@ -82,6 +90,25 @@ export const coworkerDeleteSlackMessageDefinition: LLMToolDefinition = {
 			timestamp: { type: "string", description: "Message timestamp" },
 		},
 		required: ["channel", "timestamp"],
+	},
+};
+
+export const coworkerUpdateSlackMessageDefinition: LLMToolDefinition = {
+	name: "coworker_update_slack_message",
+	description: "Update an existing Slack message.",
+	input_schema: {
+		type: "object",
+		properties: {
+			channel: { type: "string", description: "Slack channel ID" },
+			timestamp: { type: "string", description: "Message timestamp to update" },
+			text: { type: "string", description: "New message text" },
+			blocks: {
+				type: "array",
+				description: "Optional Block Kit blocks for rich formatting",
+				items: { type: "object" },
+			},
+		},
+		required: ["channel", "timestamp", "text"],
 	},
 };
 
@@ -422,34 +449,42 @@ function createCoworkerSlackHistoryExecutor(slackToken: string): ToolExecutor {
 	};
 }
 
+function buildMessageParams(args: Record<string, unknown>): Record<string, string> {
+	const channel = getRequiredString(args, "channel");
+	const text = getRequiredString(args, "text");
+	const threadTs = getOptionalString(args, "thread_ts");
+	const params: Record<string, string> = { channel, text };
+	if (threadTs) params.thread_ts = threadTs;
+	if (Array.isArray(args.blocks) && args.blocks.length > 0) {
+		params.blocks = JSON.stringify(args.blocks);
+	}
+	return params;
+}
+
+function parseMessageResponse(
+	data: JsonRecord,
+	fallbackChannel: string,
+): { ts: string; channel: string } | null {
+	const ts = typeof data.ts === "string" ? data.ts : "";
+	if (!ts) return null;
+	const channel = typeof data.channel === "string" ? data.channel : fallbackChannel;
+	return { ts, channel };
+}
+
 function createCoworkerSendSlackMessageExecutor(slackToken: string): ToolExecutor {
 	return async (args) => {
 		try {
-			const channel = getRequiredString(args, "channel");
-			const text = getRequiredString(args, "text");
-			const threadTs = getOptionalString(args, "thread_ts");
-
-			const params: Record<string, string> = { channel, text };
-			if (threadTs) {
-				params.thread_ts = threadTs;
-			}
-
+			const params = buildMessageParams(args);
 			const apiResult = await slackApiCall(slackToken, "chat.postMessage", params);
 			if (!apiResult.ok) {
 				return { output: null, durationMs: 0, error: apiResult.error };
 			}
 
-			const ts = typeof apiResult.data.ts === "string" ? apiResult.data.ts : "";
-			const responseChannel =
-				typeof apiResult.data.channel === "string" ? apiResult.data.channel : channel;
-			if (!ts) {
+			const parsed = parseMessageResponse(apiResult.data, params.channel);
+			if (!parsed) {
 				return { output: null, durationMs: 0, error: "Slack response missing message timestamp" };
 			}
-
-			return {
-				output: { ts, channel: responseChannel },
-				durationMs: 0,
-			};
+			return { output: parsed, durationMs: 0 };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return { output: null, durationMs: 0, error: message };
@@ -503,6 +538,35 @@ function createCoworkerDeleteSlackMessageExecutor(slackToken: string): ToolExecu
 
 			return {
 				output: { ok: true },
+				durationMs: 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { output: null, durationMs: 0, error: message };
+		}
+	};
+}
+
+function createCoworkerUpdateSlackMessageExecutor(slackToken: string): ToolExecutor {
+	return async (args) => {
+		try {
+			const channel = getRequiredString(args, "channel");
+			const timestamp = getRequiredString(args, "timestamp");
+			const text = getRequiredString(args, "text");
+			const blocks = args.blocks;
+
+			const params: Record<string, string> = { channel, ts: timestamp, text };
+			if (Array.isArray(blocks) && blocks.length > 0) {
+				params.blocks = JSON.stringify(blocks);
+			}
+
+			const apiResult = await slackApiCall(slackToken, "chat.update", params);
+			if (!apiResult.ok) {
+				return { output: null, durationMs: 0, error: apiResult.error };
+			}
+
+			return {
+				output: { ok: true, ts: timestamp },
 				durationMs: 0,
 			};
 		} catch (error) {
@@ -716,6 +780,7 @@ export function createSlackToolExecutors(slackToken: string): {
 		coworker_send_slack_message: createCoworkerSendSlackMessageExecutor(slackToken),
 		coworker_slack_react: createCoworkerSlackReactExecutor(slackToken),
 		coworker_delete_slack_message: createCoworkerDeleteSlackMessageExecutor(slackToken),
+		coworker_update_slack_message: createCoworkerUpdateSlackMessageExecutor(slackToken),
 		coworker_upload_to_slack: createCoworkerUploadToSlackExecutor(slackToken),
 		coworker_download_from_slack: createCoworkerDownloadFromSlackExecutor(slackToken),
 		create_thread: createCreateThreadExecutor(slackToken),

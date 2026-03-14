@@ -1,4 +1,4 @@
-export { PipedreamClient } from "./pipedream/index.js";
+export { PipedreamClient } from "./client.js";
 export type {
 	PipedreamAccount,
 	PipedreamAction,
@@ -12,4 +12,4 @@ export type {
 	PipedreamListAppsOptions,
 	PipedreamProxyOptions,
 	PipedreamRunActionOptions,
-} from "./pipedream/index.js";
+} from "./types.js";

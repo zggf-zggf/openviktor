@@ -8,7 +8,8 @@ import {
 } from "@openviktor/shared";
 import type { App } from "@slack/bolt";
 import type { AgentRunner } from "../agent/runner.js";
-import { type SlackClient, resolveMember, resolveWorkspace } from "./resolve.js";
+import { registerWorkspaceToken } from "../tool-gateway/server.js";
+import { type SlackClient, resolveMember, resolveWorkspace, stripBotMention } from "./resolve.js";
 
 export interface BotContext {
 	prisma: PrismaClient;
@@ -37,6 +38,7 @@ async function resolveContext(
 ) {
 	const slackClient = client as unknown as SlackClient;
 	const workspace = await resolveWorkspace(ctx.prisma, slackClient, teamId, botToken, botUserId);
+	registerWorkspaceToken("local", workspace.id);
 	const member = await resolveMember(ctx.prisma, slackClient, workspace.id, slackUserId);
 	return { workspace, member };
 }
@@ -50,6 +52,22 @@ async function fetchSkillCatalog(prisma: PrismaClient, workspaceId: string): Pro
 	return skills.map((s) => {
 		const desc = s.description ? ` — ${s.description}` : "";
 		return `${s.name} (v${s.version})${desc}`;
+	});
+}
+
+async function fetchIntegrationCatalog(
+	prisma: PrismaClient,
+	workspaceId: string,
+): Promise<string[]> {
+	const skills = await prisma.skill.findMany({
+		where: { workspaceId, name: { startsWith: "pd_" } },
+		select: { name: true, description: true },
+		orderBy: { name: "asc" },
+	});
+	return skills.map((s) => {
+		const appName = s.name.replace(/^pd_/, "");
+		const desc = s.description ?? appName;
+		return `${appName}: ${desc}`;
 	});
 }
 
@@ -86,6 +104,8 @@ async function handleMessage(
 		if (!participating) return;
 	}
 
+	const slackClient = client as unknown as SlackClient;
+
 	const { workspace, member } = await resolveContext(
 		ctx,
 		client,
@@ -95,27 +115,49 @@ async function handleMessage(
 		msg.user as string,
 	);
 
+	await addReaction(slackClient, msg.channel, msg.ts, "hourglass_flowing_sand");
+
 	const triggerType = isDm ? "DM" : "MENTION";
+	const userMessage = stripBotMention(msg.text as string, botUserId);
 
-	const skillCatalog = await fetchSkillCatalog(ctx.prisma, workspace.id);
+	const [skillCatalog, integrationCatalog] = await Promise.all([
+		fetchSkillCatalog(ctx.prisma, workspace.id),
+		fetchIntegrationCatalog(ctx.prisma, workspace.id),
+	]);
 
-	const result = await ctx.runner.run({
-		workspaceId: workspace.id,
-		memberId: member.id,
-		triggerType,
-		slackChannel: msg.channel,
-		slackThreadTs: threadTs,
-		userMessage: msg.text as string,
-		promptContext: {
-			workspaceName: workspace.slackTeamName,
-			channel: msg.channel,
+	try {
+		const result = await ctx.runner.run({
+			workspaceId: workspace.id,
+			memberId: member.id,
 			triggerType,
-			userName: member.displayName ?? undefined,
-			skillCatalog,
-		},
-	});
+			slackChannel: msg.channel,
+			slackThreadTs: threadTs,
+			userMessage,
+			promptContext: {
+				workspaceName: workspace.slackTeamName,
+				channel: msg.channel,
+				slackThreadTs: threadTs,
+				triggerType,
+				userName: member.displayName ?? undefined,
+				skillCatalog,
+				integrationCatalog,
+			},
+		});
 
-	await sendResponse(say, result.responseText, threadTs);
+		if (!result.messageSent) {
+			await sendResponse(say, result.responseText, threadTs);
+		}
+		await removeReaction(slackClient, msg.channel, msg.ts, "hourglass_flowing_sand");
+		await addReaction(slackClient, msg.channel, msg.ts, "white_check_mark");
+	} catch (error) {
+		await removeReaction(slackClient, msg.channel, msg.ts, "hourglass_flowing_sand");
+		if (error instanceof ThreadLockedError) {
+			await addReaction(slackClient, msg.channel, msg.ts, "eyes");
+			ctx.runner.injectMessage(msg.channel, threadTs, userMessage);
+			return;
+		}
+		throw error;
+	}
 }
 
 async function sendResponse(
@@ -123,8 +165,11 @@ async function sendResponse(
 	responseText: string,
 	threadTs: string,
 ): Promise<void> {
-	const mrkdwn = markdownToMrkdwn(responseText);
-	const chunks = chunkMessage(mrkdwn);
+	const text = responseText.trim();
+	if (!text) return;
+	const mrkdwn = markdownToMrkdwn(text);
+	const chunks = chunkMessage(mrkdwn).filter((c) => c.trim().length > 0);
+	if (chunks.length === 0) chunks.push(text);
 	for (const chunk of chunks) {
 		await say({ text: chunk, thread_ts: threadTs });
 	}
@@ -171,60 +216,128 @@ async function handleEventError(
 	await safeReply(say, threadTs);
 }
 
+async function addReaction(
+	client: SlackClient,
+	channel: string,
+	timestamp: string,
+	emoji: string,
+): Promise<void> {
+	try {
+		await client.reactions.add({ channel, timestamp, name: emoji });
+	} catch {
+		// Best-effort — don't fail the request if reaction fails
+	}
+}
+
+async function removeReaction(
+	client: SlackClient,
+	channel: string,
+	timestamp: string,
+	emoji: string,
+): Promise<void> {
+	try {
+		await client.reactions.remove({ channel, timestamp, name: emoji });
+	} catch {
+		// Best-effort
+	}
+}
+
 function isActionableMessage(msg: SlackMessage, botUserId?: string): boolean {
 	return !msg.subtype && !msg.bot_id && !!msg.user && !!msg.text && msg.user !== botUserId;
+}
+
+async function handleMention(
+	ctx: BotContext,
+	event: { channel: string; ts: string; thread_ts?: string; user: string; text: string },
+	client: unknown,
+	teamId: string,
+	botToken: string,
+	botUserId: string,
+	say: (opts: { text: string; thread_ts?: string }) => Promise<unknown>,
+): Promise<void> {
+	const threadTs = event.thread_ts ?? event.ts;
+	const slackClient = client as unknown as SlackClient;
+
+	try {
+		await slackClient.conversations.join({ channel: event.channel });
+	} catch {
+		// Already a member or can't join — continue regardless
+	}
+
+	const { workspace, member } = await resolveContext(
+		ctx,
+		client,
+		teamId,
+		botToken,
+		botUserId,
+		event.user,
+	);
+
+	await addReaction(slackClient, event.channel, event.ts, "hourglass_flowing_sand");
+
+	const userMessage = stripBotMention(event.text, botUserId);
+
+	const [skillCatalog, integrationCatalog] = await Promise.all([
+		fetchSkillCatalog(ctx.prisma, workspace.id),
+		fetchIntegrationCatalog(ctx.prisma, workspace.id),
+	]);
+
+	ctx.logger.info({ channel: event.channel, user: event.user }, "Mention received");
+
+	try {
+		const result = await ctx.runner.run({
+			workspaceId: workspace.id,
+			memberId: member.id,
+			triggerType: "MENTION",
+			slackChannel: event.channel,
+			slackThreadTs: threadTs,
+			userMessage,
+			promptContext: {
+				workspaceName: workspace.slackTeamName,
+				channel: event.channel,
+				slackThreadTs: threadTs,
+				triggerType: "MENTION",
+				userName: member.displayName ?? undefined,
+				skillCatalog,
+				integrationCatalog,
+			},
+		});
+
+		if (!result.messageSent) {
+			await sendResponse(say, result.responseText, threadTs);
+		}
+		await removeReaction(slackClient, event.channel, event.ts, "hourglass_flowing_sand");
+		await addReaction(slackClient, event.channel, event.ts, "white_check_mark");
+	} catch (error) {
+		await removeReaction(slackClient, event.channel, event.ts, "hourglass_flowing_sand");
+		if (error instanceof ThreadLockedError) {
+			await addReaction(slackClient, event.channel, event.ts, "eyes");
+			ctx.runner.injectMessage(event.channel, threadTs, userMessage);
+			return;
+		}
+		throw error;
+	}
 }
 
 export function registerEventHandlers(app: App, ctx: BotContext): void {
 	app.event("app_mention", async ({ event, say, context, client }) => {
 		const threadTs = event.thread_ts ?? event.ts;
+		const { teamId, botUserId, botToken } = context;
+		if (!teamId || !botUserId || !botToken || !event.user || !event.text) {
+			ctx.logger.error("Missing required fields in app_mention event or context");
+			return;
+		}
+
+		const mentionEvent = {
+			channel: event.channel,
+			ts: event.ts,
+			thread_ts: event.thread_ts,
+			user: event.user,
+			text: event.text,
+		};
 
 		try {
-			const teamId = context.teamId;
-			const botUserId = context.botUserId;
-			const botToken = context.botToken;
-			const slackUser = event.user;
-			const rawText = event.text;
-			if (!teamId || !botUserId || !botToken || !slackUser || !rawText) {
-				ctx.logger.error("Missing required fields in app_mention event or context");
-				return;
-			}
-
-			const slackClient = client as unknown as SlackClient;
-			try {
-				await slackClient.conversations.join({ channel: event.channel });
-			} catch {
-				// Already a member or can't join — continue regardless
-			}
-
-			const { workspace, member } = await resolveContext(
-				ctx,
-				client,
-				teamId,
-				botToken,
-				botUserId,
-				slackUser,
-			);
-
-			const skillCatalog = await fetchSkillCatalog(ctx.prisma, workspace.id);
-
-			const result = await ctx.runner.run({
-				workspaceId: workspace.id,
-				memberId: member.id,
-				triggerType: "MENTION",
-				slackChannel: event.channel,
-				slackThreadTs: threadTs,
-				userMessage: rawText,
-				promptContext: {
-					workspaceName: workspace.slackTeamName,
-					channel: event.channel,
-					triggerType: "MENTION",
-					userName: member.displayName ?? undefined,
-					skillCatalog,
-				},
-			});
-
-			await sendResponse(say, result.responseText, threadTs);
+			await handleMention(ctx, mentionEvent, client, teamId, botToken, botUserId, say);
 		} catch (error) {
 			await handleEventError(ctx, error, "app_mention", say, threadTs);
 		}
@@ -243,6 +356,11 @@ export function registerEventHandlers(app: App, ctx: BotContext): void {
 			ctx.logger.error("Missing teamId, botUserId, or botToken in context");
 			return;
 		}
+
+		ctx.logger.info(
+			{ channel: msg.channel, user: msg.user, isDm, threadTs: msg.thread_ts ?? msg.ts },
+			"Message received",
+		);
 
 		try {
 			await handleMessage(ctx, msg, client, teamId, botToken, botUserId, say);

@@ -8,6 +8,10 @@ export interface SlackClient {
 	conversations: {
 		join: (params: { channel: string }) => Promise<unknown>;
 	};
+	reactions: {
+		add: (params: { channel: string; timestamp: string; name: string }) => Promise<unknown>;
+		remove: (params: { channel: string; timestamp: string; name: string }) => Promise<unknown>;
+	};
 }
 
 export async function resolveWorkspace(

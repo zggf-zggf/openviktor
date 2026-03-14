@@ -61,6 +61,7 @@ import {
 	coworkerSendSlackMessageDefinition,
 	coworkerSlackHistoryDefinition,
 	coworkerSlackReactDefinition,
+	coworkerUpdateSlackMessageDefinition,
 	coworkerUploadToSlackDefinition,
 	createSlackToolExecutors,
 	createThreadDefinition,
@@ -152,6 +153,11 @@ export function createNativeRegistry(config: RegistryConfig = {}): ToolRegistry 
 			"coworker_delete_slack_message",
 			coworkerDeleteSlackMessageDefinition,
 			slackComms.coworker_delete_slack_message,
+		);
+		registry.register(
+			"coworker_update_slack_message",
+			coworkerUpdateSlackMessageDefinition,
+			slackComms.coworker_update_slack_message,
 		);
 		registry.register(
 			"coworker_upload_to_slack",
@@ -257,9 +263,39 @@ export function createNativeRegistry(config: RegistryConfig = {}): ToolRegistry 
 }
 
 export function registerDbTools(registry: ToolRegistry, prisma: PrismaClient): void {
-	registry.register("read_learnings", readLearningsDefinition, createReadLearningsExecutor(prisma));
-	registry.register("write_learning", writeLearningDefinition, createWriteLearningExecutor(prisma));
-	registry.register("read_skill", readSkillDefinition, createReadSkillExecutor(prisma));
-	registry.register("list_skills", listSkillsDefinition, createListSkillsExecutor(prisma));
-	registry.register("write_skill", writeSkillDefinition, createWriteSkillExecutor(prisma));
+	const local = { localOnly: true };
+	registry.register(
+		"read_learnings",
+		readLearningsDefinition,
+		createReadLearningsExecutor(prisma),
+		local,
+	);
+	registry.register(
+		"write_learning",
+		writeLearningDefinition,
+		createWriteLearningExecutor(prisma),
+		local,
+	);
+	registry.register("read_skill", readSkillDefinition, createReadSkillExecutor(prisma), local);
+	registry.register("list_skills", listSkillsDefinition, createListSkillsExecutor(prisma), local);
+	registry.register("write_skill", writeSkillDefinition, createWriteSkillExecutor(prisma), local);
 }
+
+export {
+	listAvailableIntegrationsDefinition,
+	listWorkspaceConnectionsDefinition,
+	connectIntegrationDefinition,
+	disconnectIntegrationDefinition,
+	syncWorkspaceConnectionsDefinition,
+	createListAvailableIntegrationsExecutor,
+	createListWorkspaceConnectionsExecutor,
+	createConnectIntegrationExecutor,
+	createDisconnectIntegrationExecutor,
+	createSyncWorkspaceConnectionsExecutor,
+	createIntegrationSyncHandler,
+	restoreToolsFromDb,
+	convertConfigurableProps,
+	actionKeyToToolName,
+	extractToolSchemas,
+} from "./integrations/index.js";
+export type { IntegrationSyncHandler } from "./integrations/index.js";

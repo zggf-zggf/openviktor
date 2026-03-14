@@ -13,6 +13,7 @@
 	},
 	"dependencies": {
 		"@openviktor/db": "workspace:*",
+		"@openviktor/integrations": "workspace:*",
 		"@openviktor/shared": "workspace:*"
 	},
 	"devDependencies": {

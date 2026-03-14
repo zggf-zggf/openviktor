@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN bun run --cwd packages/db db:generate
-CMD ["sh", "-c", "bun run --filter @openviktor/db db:migrate:deploy && bun --watch run apps/bot/src/index.ts"]
+CMD ["sh", "-c", "bun install && bun run --cwd packages/db db:generate && bun run --filter @openviktor/db db:migrate:deploy && bun --watch run apps/bot/src/index.ts"]
 
 FROM base AS runner
 RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*
