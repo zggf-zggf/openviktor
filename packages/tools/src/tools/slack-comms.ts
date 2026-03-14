@@ -12,7 +12,9 @@ type SlackToolName =
 	| "coworker_delete_slack_message"
 	| "coworker_update_slack_message"
 	| "coworker_upload_to_slack"
-	| "coworker_download_from_slack";
+	| "coworker_download_from_slack"
+	| "create_thread"
+	| "send_message_to_thread";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -808,5 +810,7 @@ export function createSlackToolExecutors(slackToken: string): {
 		coworker_update_slack_message: createCoworkerUpdateSlackMessageExecutor(slackToken),
 		coworker_upload_to_slack: createCoworkerUploadToSlackExecutor(slackToken),
 		coworker_download_from_slack: createCoworkerDownloadFromSlackExecutor(slackToken),
+		create_thread: createCreateThreadExecutor(slackToken),
+		send_message_to_thread: createSendMessageToThreadExecutor(slackToken),
 	};
 }

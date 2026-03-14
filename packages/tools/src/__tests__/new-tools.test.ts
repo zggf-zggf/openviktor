@@ -9,6 +9,7 @@ import { createCustomApiIntegrationExecutor } from "../tools/create-custom-api-i
 import { fileToMarkdownExecutor } from "../tools/file-to-markdown.js";
 import { createGitExecutors } from "../tools/git.js";
 import { createQuickAiSearchExecutor } from "../tools/quick-ai-search.js";
+import { createSlackToolExecutors } from "../tools/slack-comms.js";
 import { workspaceTreeExecutor } from "../tools/workspace-tree.js";
 
 let workspaceDir: string;
