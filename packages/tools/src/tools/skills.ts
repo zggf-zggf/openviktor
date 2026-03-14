@@ -40,7 +40,8 @@ export const writeSkillDefinition: LLMToolDefinition = {
 			},
 			description: {
 				type: "string",
-				description: "A one-liner description of the skill",
+				description:
+					'A one-liner description following the format: "[What it does]. Use when [trigger]. Do NOT use for [anti-trigger]."',
 			},
 			content: {
 				type: "string",

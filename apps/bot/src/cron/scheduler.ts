@@ -155,11 +155,16 @@ export class CronScheduler {
 
 			const model = getModelForTier(job.costTier, this.config.defaultModel);
 
+			const activeThreads = await this.loadActiveThreads(job.workspaceId);
+
 			const promptContext: PromptContext = {
 				workspaceName: job.workspace.slackTeamName,
 				channel: job.slackChannel ?? "general",
 				triggerType,
 				cronJobName: job.name,
+				cronAgentPrompt: triggerType === "CRON" ? agentPrompt : undefined,
+				cronRunCount: job.runCount,
+				activeThreads,
 				heartbeatPrompt,
 				discoveryPrompt,
 			};
@@ -283,6 +288,18 @@ export class CronScheduler {
 				nextRunAt: calculateNextRun(job.schedule, now),
 			},
 		});
+	}
+
+	private async loadActiveThreads(workspaceId: string): Promise<string[]> {
+		const threads = await this.prisma.thread.findMany({
+			where: {
+				workspaceId,
+				status: "ACTIVE",
+			},
+			select: { slackChannel: true, slackThreadTs: true },
+			take: 20,
+		});
+		return threads.map((t) => `${t.slackChannel}/${t.slackThreadTs}`);
 	}
 
 	private async loadLearnings(workspaceId: string): Promise<string[]> {

@@ -78,4 +78,102 @@ describe("buildSystemPrompt", () => {
 		const prompt = buildSystemPrompt(makeContext());
 		expect(prompt).not.toContain("## Skills");
 	});
+
+	it("includes skill description format guidance when skills present", () => {
+		const prompt = buildSystemPrompt(
+			makeContext({ skillCatalog: ["test-skill (v1) — A test skill"] }),
+		);
+		expect(prompt).toContain("[What it does]. Use when [trigger]. Do NOT use for [anti-trigger].");
+	});
+
+	it("includes error handling rules in guidelines", () => {
+		const prompt = buildSystemPrompt(makeContext());
+		expect(prompt).toContain("Own errors immediately");
+		expect(prompt).toContain("Never fabricate URLs or data");
+		expect(prompt).toContain("No defensive language");
+	});
+
+	it("includes thread info section", () => {
+		const prompt = buildSystemPrompt(makeContext({ threadId: "thread-123", channel: "C12345" }));
+		expect(prompt).toContain("## Your Thread Info");
+		expect(prompt).toContain("Thread ID: thread-123");
+		expect(prompt).toContain("Channel: C12345");
+	});
+
+	it("includes active threads when provided", () => {
+		const prompt = buildSystemPrompt(
+			makeContext({
+				activeThreads: ["C123/ts-001", "C456/ts-002"],
+			}),
+		);
+		expect(prompt).toContain("## Currently Active Threads");
+		expect(prompt).toContain("- C123/ts-001");
+		expect(prompt).toContain("- C456/ts-002");
+	});
+
+	it("omits active threads section when empty", () => {
+		const prompt = buildSystemPrompt(makeContext({ activeThreads: [] }));
+		expect(prompt).not.toContain("## Currently Active Threads");
+	});
+
+	it("omits active threads section when undefined", () => {
+		const prompt = buildSystemPrompt(makeContext());
+		expect(prompt).not.toContain("## Currently Active Threads");
+	});
+});
+
+describe("buildSystemPrompt — cron", () => {
+	it("includes cron job name", () => {
+		const prompt = buildSystemPrompt(
+			makeContext({ triggerType: "CRON", cronJobName: "daily-report" }),
+		);
+		expect(prompt).toContain('"daily-report"');
+	});
+
+	it("includes error handling rules for cron", () => {
+		const prompt = buildSystemPrompt(makeContext({ triggerType: "CRON", cronJobName: "test" }));
+		expect(prompt).toContain("Own errors immediately");
+		expect(prompt).toContain("Never fabricate URLs or data");
+	});
+
+	it("includes first-run marker when cronRunCount is 0", () => {
+		const prompt = buildSystemPrompt(
+			makeContext({ triggerType: "CRON", cronJobName: "test", cronRunCount: 0 }),
+		);
+		expect(prompt).toContain("FIRST TIME this cron is running");
+	});
+
+	it("omits first-run marker when cronRunCount > 0", () => {
+		const prompt = buildSystemPrompt(
+			makeContext({ triggerType: "CRON", cronJobName: "test", cronRunCount: 5 }),
+		);
+		expect(prompt).not.toContain("FIRST TIME");
+	});
+
+	it("inlines cron agent prompt as Task section", () => {
+		const prompt = buildSystemPrompt(
+			makeContext({
+				triggerType: "CRON",
+				cronJobName: "report",
+				cronAgentPrompt: "Generate the weekly summary report.",
+			}),
+		);
+		expect(prompt).toContain("## Task");
+		expect(prompt).toContain("Generate the weekly summary report.");
+	});
+
+	it("includes thread info and active threads in cron prompt", () => {
+		const prompt = buildSystemPrompt(
+			makeContext({
+				triggerType: "CRON",
+				cronJobName: "test",
+				threadId: "cron-thread-1",
+				activeThreads: ["C999/ts-active"],
+			}),
+		);
+		expect(prompt).toContain("## Your Thread Info");
+		expect(prompt).toContain("Thread ID: cron-thread-1");
+		expect(prompt).toContain("## Currently Active Threads");
+		expect(prompt).toContain("- C999/ts-active");
+	});
 });
