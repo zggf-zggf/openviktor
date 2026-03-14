@@ -15,6 +15,7 @@ import {
 
 const MAX_CONCURRENT_RUNS = 4;
 const MAX_CONSECUTIVE_FAILURES = 3;
+const SCRIPT_TIMEOUT_MS = 30_000;
 
 export interface SchedulerConfig {
 	checkIntervalMs: number;
@@ -33,9 +34,18 @@ interface CronJobRecord {
 	agentPrompt: string;
 	conditionScript: string | null;
 	slackChannel: string | null;
+	model: string | null;
+	scriptCommand: string | null;
+	dependentPaths: string[];
 	lastRunAt: Date | null;
 	runCount: number;
 	workspace: { id: string; slackTeamName: string; settings: unknown };
+}
+
+export interface ScriptResult {
+	exitCode: number;
+	stdout: string;
+	stderr: string;
 }
 
 export class CronScheduler {
@@ -113,6 +123,11 @@ export class CronScheduler {
 		});
 		if (!job) throw new Error(`Cron job not found: ${jobId}`);
 
+		if (job.type === "SCRIPT") {
+			await this.executeScriptJob(job, true);
+			return;
+		}
+
 		const agentPrompt = extraPrompt
 			? `${job.agentPrompt}\n\n## Additional Context\n${extraPrompt}`
 			: job.agentPrompt;
@@ -121,40 +136,23 @@ export class CronScheduler {
 	}
 
 	private async executeJob(job: CronJobRecord, skipCondition = false): Promise<void> {
+		if (job.type === "SCRIPT") {
+			await this.executeScriptJob(job, skipCondition);
+			return;
+		}
+
 		const triggerType: TriggerType =
 			job.type === "HEARTBEAT" ? "HEARTBEAT" : job.type === "DISCOVERY" ? "DISCOVERY" : "CRON";
 
 		try {
 			if (!skipCondition) {
-				const costCheck = await checkCostControl(this.prisma, job.workspaceId, this.logger);
-				if (!costCheck.allowed) {
-					await this.updateJobAfterSkip(job);
-					return;
-				}
-
-				if (job.conditionScript) {
-					const condCtx: ConditionContext = {
-						workspaceId: job.workspaceId,
-						cronJobId: job.id,
-						lastRunAt: job.lastRunAt,
-					};
-					const shouldRun = await evaluateCondition(
-						job.conditionScript,
-						condCtx,
-						this.prisma,
-						this.logger,
-					);
-					if (!shouldRun) {
-						this.logger.info({ cronJobId: job.id, name: job.name }, "Condition not met, skipping");
-						await this.updateJobAfterSkip(job);
-						return;
-					}
-				}
+				const shouldRun = await this.shouldJobRun(job);
+				if (!shouldRun) return;
 			}
 
 			const { agentPrompt, heartbeatPrompt, discoveryPrompt } = await this.buildJobPrompt(job);
 
-			const model = getModelForTier(job.costTier, this.config.defaultModel);
+			const model = getModelForTier(job.costTier, this.config.defaultModel, job.model);
 
 			const activeThreads = await fetchActiveThreads(this.prisma, job.workspaceId);
 
@@ -179,9 +177,15 @@ export class CronScheduler {
 				cronJobId: job.id,
 				model,
 				slackChannel: job.slackChannel ?? "general",
-				slackThreadTs,
+				slackThreadTs: `cron-${job.id}-${Date.now()}`,
 				userMessage: agentPrompt,
-				promptContext,
+				promptContext: {
+					workspaceName: job.workspace.slackTeamName,
+					channel: job.slackChannel ?? "general",
+					triggerType,
+					cronJobName: job.name,
+					heartbeatPrompt,
+				},
 			};
 
 			this.logger.info(
@@ -190,17 +194,7 @@ export class CronScheduler {
 			);
 
 			const result = await this.runner.run(trigger);
-
-			const now = new Date();
-			await this.prisma.cronJob.update({
-				where: { id: job.id },
-				data: {
-					lastRunAt: now,
-					nextRunAt: calculateNextRun(job.schedule, now),
-					runCount: job.runCount + 1,
-					lastRunStatus: "COMPLETED",
-				},
-			});
+			await this.updateJobAfterRun(job, "COMPLETED");
 
 			this.logger.info(
 				{
@@ -218,35 +212,239 @@ export class CronScheduler {
 				"Cron job execution failed",
 			);
 
-			const now = new Date();
-			await this.prisma.cronJob.update({
-				where: { id: job.id },
-				data: {
-					lastRunAt: now,
-					nextRunAt: calculateNextRun(job.schedule, now),
-					runCount: job.runCount + 1,
-					lastRunStatus: "FAILED",
-				},
-			});
+			await this.updateJobAfterRun(job, "FAILED");
+			await this.checkConsecutiveFailures(job);
+		}
+	}
 
-			const recentRuns = await this.prisma.agentRun.findMany({
-				where: { cronJobId: job.id },
-				orderBy: { createdAt: "desc" },
-				take: MAX_CONSECUTIVE_FAILURES,
-				select: { status: true },
-			});
+	private async shouldJobRun(job: CronJobRecord): Promise<boolean> {
+		const costCheck = await checkCostControl(this.prisma, job.workspaceId, this.logger);
+		if (!costCheck.allowed) {
+			await this.updateJobAfterSkip(job);
+			return false;
+		}
 
-			const allFailed =
-				recentRuns.length >= MAX_CONSECUTIVE_FAILURES &&
-				recentRuns.every((r) => r.status === "FAILED");
-
-			if (allFailed) {
-				this.logger.warn(
-					{ cronJobId: job.id, name: job.name },
-					`Cron job has ${MAX_CONSECUTIVE_FAILURES} consecutive failures`,
+		if (job.dependentPaths.length > 0) {
+			const depsReady = await this.checkDependencies(job);
+			if (!depsReady) {
+				this.logger.info(
+					{ cronJobId: job.id, name: job.name, dependentPaths: job.dependentPaths },
+					"Dependencies not met, skipping",
 				);
+				await this.updateJobAfterSkip(job);
+				return false;
 			}
 		}
+
+		if (job.conditionScript) {
+			const condCtx: ConditionContext = {
+				workspaceId: job.workspaceId,
+				cronJobId: job.id,
+				lastRunAt: job.lastRunAt,
+			};
+			const shouldRun = await evaluateCondition(
+				job.conditionScript,
+				condCtx,
+				this.prisma,
+				this.logger,
+			);
+			if (!shouldRun) {
+				this.logger.info({ cronJobId: job.id, name: job.name }, "Condition not met, skipping");
+				await this.updateJobAfterSkip(job);
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private async buildAgentPrompt(
+		job: CronJobRecord,
+	): Promise<{ agentPrompt: string; heartbeatPrompt?: string }> {
+		if (job.type !== "HEARTBEAT") {
+			return { agentPrompt: job.agentPrompt };
+		}
+
+		const learnings = await this.loadLearnings(job.workspaceId);
+		const settings = job.workspace.settings as Record<string, unknown> | null;
+		const heartbeatSettings = settings?.heartbeat as Record<string, unknown> | undefined;
+		const thresholds = {
+			...DEFAULT_THRESHOLDS,
+			...(heartbeatSettings?.thresholds as Partial<EngagementThresholds> | undefined),
+		};
+
+		return {
+			agentPrompt:
+				"Execute your heartbeat check-in now. Follow the instructions in your system prompt.",
+			heartbeatPrompt: buildHeartbeatPrompt(learnings, thresholds),
+		};
+	}
+
+	private async updateJobAfterRun(
+		job: CronJobRecord,
+		status: "COMPLETED" | "FAILED",
+	): Promise<void> {
+		const now = new Date();
+		await this.prisma.cronJob.update({
+			where: { id: job.id },
+			data: {
+				lastRunAt: now,
+				nextRunAt: calculateNextRun(job.schedule, now),
+				runCount: job.runCount + 1,
+				lastRunStatus: status,
+			},
+		});
+	}
+
+	private async checkConsecutiveFailures(job: CronJobRecord): Promise<void> {
+		const recentRuns = await this.prisma.agentRun.findMany({
+			where: { cronJobId: job.id },
+			orderBy: { createdAt: "desc" },
+			take: MAX_CONSECUTIVE_FAILURES,
+			select: { status: true },
+		});
+
+		const allFailed =
+			recentRuns.length >= MAX_CONSECUTIVE_FAILURES &&
+			recentRuns.every((r) => r.status === "FAILED");
+
+		if (allFailed) {
+			this.logger.warn(
+				{ cronJobId: job.id, name: job.name },
+				`Cron job has ${MAX_CONSECUTIVE_FAILURES} consecutive failures`,
+			);
+		}
+	}
+
+	private async executeScriptJob(job: CronJobRecord, skipCondition = false): Promise<void> {
+		try {
+			if (!skipCondition) {
+				const ready = await this.shouldScriptJobRun(job);
+				if (!ready) return;
+			}
+
+			const command = job.scriptCommand ?? job.agentPrompt;
+			this.logger.info({ cronJobId: job.id, name: job.name, command }, "Executing script cron");
+
+			const result = await this.runScript(command);
+			const status = result.exitCode === 0 ? "COMPLETED" : "FAILED";
+			await this.updateJobAfterRun(job, status);
+
+			this.logger.info(
+				{
+					cronJobId: job.id,
+					name: job.name,
+					exitCode: result.exitCode,
+					stdout: result.stdout.slice(0, 500),
+					status,
+				},
+				"Script cron completed",
+			);
+		} catch (error) {
+			this.logger.error(
+				{ cronJobId: job.id, name: job.name, err: error },
+				"Script cron execution failed",
+			);
+			await this.updateJobAfterRun(job, "FAILED");
+		}
+	}
+
+	private async shouldScriptJobRun(job: CronJobRecord): Promise<boolean> {
+		if (job.dependentPaths.length > 0) {
+			const depsReady = await this.checkDependencies(job);
+			if (!depsReady) {
+				this.logger.info(
+					{ cronJobId: job.id, name: job.name, dependentPaths: job.dependentPaths },
+					"Script cron dependencies not met, skipping",
+				);
+				await this.updateJobAfterSkip(job);
+				return false;
+			}
+		}
+
+		if (job.conditionScript) {
+			const condCtx: ConditionContext = {
+				workspaceId: job.workspaceId,
+				cronJobId: job.id,
+				lastRunAt: job.lastRunAt,
+			};
+			const shouldRun = await evaluateCondition(
+				job.conditionScript,
+				condCtx,
+				this.prisma,
+				this.logger,
+			);
+			if (!shouldRun) {
+				this.logger.info(
+					{ cronJobId: job.id, name: job.name },
+					"Condition not met, skipping script cron",
+				);
+				await this.updateJobAfterSkip(job);
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	async runScript(command: string): Promise<ScriptResult> {
+		const { execFile } = await import("node:child_process");
+		const { promisify } = await import("node:util");
+		const execFileAsync = promisify(execFile);
+
+		try {
+			const { stdout, stderr } = await execFileAsync("sh", ["-c", command], {
+				timeout: SCRIPT_TIMEOUT_MS,
+				maxBuffer: 1024 * 1024,
+			});
+			return { exitCode: 0, stdout, stderr };
+		} catch (error: unknown) {
+			const execError = error as {
+				code?: number;
+				stdout?: string;
+				stderr?: string;
+			};
+			return {
+				exitCode: execError.code ?? 1,
+				stdout: execError.stdout ?? "",
+				stderr: execError.stderr ?? "",
+			};
+		}
+	}
+
+	private async checkDependencies(job: CronJobRecord): Promise<boolean> {
+		if (job.dependentPaths.length === 0) return true;
+
+		const since = job.lastRunAt ?? new Date(0);
+
+		for (const depPath of job.dependentPaths) {
+			const depJob = await this.prisma.cronJob.findFirst({
+				where: {
+					workspaceId: job.workspaceId,
+					name: depPath,
+					enabled: true,
+				},
+				select: { lastRunAt: true, lastRunStatus: true },
+			});
+
+			if (!depJob) {
+				this.logger.warn(
+					{ cronJobId: job.id, dependentPath: depPath },
+					"Dependent cron job not found",
+				);
+				return false;
+			}
+
+			if (!depJob.lastRunAt || depJob.lastRunAt <= since) {
+				return false;
+			}
+
+			if (depJob.lastRunStatus !== "COMPLETED") {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private async buildJobPrompt(job: CronJobRecord): Promise<{

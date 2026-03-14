@@ -6,6 +6,7 @@ export { buildDiscoveryPrompt, seedDiscovery } from "./discovery.js";
 export { buildHeartbeatPrompt, seedHeartbeat, DEFAULT_THRESHOLDS } from "./heartbeat.js";
 export {
 	createCronJobDefinition,
+	createScriptCronDefinition,
 	deleteCronJobDefinition,
 	triggerCronJobDefinition,
 	listCronJobsDefinition,
