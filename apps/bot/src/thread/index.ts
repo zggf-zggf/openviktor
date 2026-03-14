@@ -9,11 +9,7 @@ export { ThreadLock } from "./lock.js";
 export { StaleThreadDetector } from "./stale.js";
 
 export async function fetchActiveThreads(
-	prisma: {
-		thread: {
-			findMany: (args: unknown) => Promise<{ slackChannel: string; slackThreadTs: string }[]>;
-		};
-	},
+	prisma: Pick<import("@openviktor/db").PrismaClient, "thread">,
 	workspaceId: string,
 ): Promise<string[]> {
 	const threads = await prisma.thread.findMany({
