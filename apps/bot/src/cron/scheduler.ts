@@ -2,6 +2,7 @@ import type { PrismaClient } from "@openviktor/db";
 import type { Logger, TriggerType } from "@openviktor/shared";
 import type { PromptContext } from "../agent/prompt.js";
 import type { AgentRunner, RunTrigger } from "../agent/runner.js";
+import { fetchActiveThreads } from "../thread/index.js";
 import { type ConditionContext, evaluateCondition } from "./condition.js";
 import { checkCostControl, getModelForTier } from "./cost-control.js";
 import { calculateNextRun } from "./cron-parser.js";
@@ -155,11 +156,16 @@ export class CronScheduler {
 
 			const model = getModelForTier(job.costTier, this.config.defaultModel);
 
+			const activeThreads = await fetchActiveThreads(this.prisma, job.workspaceId);
+
 			const promptContext: PromptContext = {
 				workspaceName: job.workspace.slackTeamName,
 				channel: job.slackChannel ?? "general",
 				triggerType,
 				cronJobName: job.name,
+				cronAgentPrompt: triggerType === "CRON" ? agentPrompt : undefined,
+				cronRunCount: job.runCount,
+				activeThreads,
 				heartbeatPrompt,
 				discoveryPrompt,
 			};

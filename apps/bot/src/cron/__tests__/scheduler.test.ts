@@ -42,6 +42,9 @@ function createMockPrisma(dueJobs: unknown[] = []) {
 		learning: {
 			findMany: vi.fn().mockResolvedValue([]),
 		},
+		thread: {
+			findMany: vi.fn().mockResolvedValue([]),
+		},
 	} as any;
 }
 

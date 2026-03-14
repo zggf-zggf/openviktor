@@ -470,7 +470,7 @@ export class AgentRunner {
 				return {
 					responseText:
 						extractText(response.content) ||
-						"I ran into an issue processing your request. Please try again.",
+						"Something went wrong while processing your request — no tool calls were generated. Let me try again.",
 					messageSent,
 					inputTokens: totalInputTokens,
 					outputTokens: totalOutputTokens,
@@ -500,7 +500,7 @@ export class AgentRunner {
 		this.logger.warn({ agentRunId }, "Exceeded maximum tool rounds");
 		return {
 			responseText:
-				"I apologize, but I encountered an issue processing your request. Please try again.",
+				"Hit the maximum number of tool rounds without completing the task. Here's what I've done so far — let me know if you'd like me to continue.",
 			messageSent,
 			inputTokens: totalInputTokens,
 			outputTokens: totalOutputTokens,

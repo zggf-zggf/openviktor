@@ -9,6 +9,10 @@ export interface PromptContext {
 	skillCatalog?: string[];
 	integrationCatalog?: string[];
 	cronJobName?: string;
+	cronAgentPrompt?: string;
+	cronRunCount?: number;
+	activeThreads?: string[];
+	threadId?: string;
 	heartbeatPrompt?: string;
 	discoveryPrompt?: string;
 }
@@ -32,41 +36,62 @@ function triggerLabel(triggerType: TriggerType): string {
 	}
 }
 
+function identity(ctx: PromptContext): string {
+	return `You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`;
+}
+
 export function buildSystemPrompt(ctx: PromptContext): string {
 	if (ctx.heartbeatPrompt) {
-		const lines = [
-			`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
-			"",
-			ctx.heartbeatPrompt,
-		];
-		return lines.join("\n");
+		return [identity(ctx), "", ctx.heartbeatPrompt].join("\n");
 	}
 
 	if (ctx.discoveryPrompt) {
-		const lines = [
-			`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
-			"",
-			ctx.discoveryPrompt,
-		];
-		return lines.join("\n");
+		return [identity(ctx), "", ctx.discoveryPrompt].join("\n");
 	}
 
 	if (ctx.triggerType === "CRON") {
-		const lines = [
-			`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
-			`You are executing a scheduled cron job: "${ctx.cronJobName ?? "Unknown"}".`,
-			"",
-			"## Guidelines",
-			"- Execute the task described in the user message thoroughly.",
-			"- Use available tools to gather information and take action.",
-			"- Post results to the appropriate Slack channel using coworker_send_slack_message.",
-			"- Be concise and direct in any messages you send.",
-		];
-		return lines.join("\n");
+		return buildCronPrompt(ctx);
 	}
 
+	return buildInteractivePrompt(ctx);
+}
+
+function buildCronPrompt(ctx: PromptContext): string {
 	const lines = [
-		`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
+		identity(ctx),
+		`You are executing a scheduled cron job: "${ctx.cronJobName ?? "Unknown"}".`,
+		"",
+	];
+
+	if (ctx.cronRunCount === 0) {
+		lines.push(
+			"IMPORTANT: This is the FIRST TIME this cron is running. Pay special attention to initial setup and baseline data collection.",
+			"",
+		);
+	}
+
+	lines.push(
+		"## Guidelines",
+		"- Execute the task described below thoroughly.",
+		"- Use available tools to gather information and take action.",
+		"- Post results to the appropriate Slack channel using coworker_send_slack_message.",
+		"- Be concise and direct in any messages you send.",
+		...buildErrorRules(),
+	);
+
+	if (ctx.cronAgentPrompt) {
+		lines.push("", "## Task", ctx.cronAgentPrompt);
+	}
+
+	lines.push(...buildThreadInfoSection(ctx));
+	lines.push(...buildActiveThreadsSection(ctx));
+
+	return lines.join("\n");
+}
+
+function buildInteractivePrompt(ctx: PromptContext): string {
+	const lines = [
+		identity(ctx),
 		"You are helpful, knowledgeable, and concise. You communicate like a capable team member — clear, direct, and friendly.",
 		"",
 		"## Startup",
@@ -78,6 +103,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 		"- Format responses using Markdown (**bold**, *italic*, `code`, ```code blocks```, [links](url)).",
 		"- If you don't know something, say so honestly.",
 		"- Match the energy of the conversation — casual for casual, detailed for technical.",
+		...buildErrorRules(),
 		"",
 		"## Response Delivery",
 		"- **Always send your response using `coworker_send_slack_message`** with the channel and thread_ts from your context.",
@@ -111,22 +137,47 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 		lines.push(`- User: ${ctx.userName}`);
 	}
 
-	if (ctx.skillCatalog && ctx.skillCatalog.length > 0) {
-		lines.push("");
-		lines.push("## Skills");
-		lines.push("Use `read_skill` to load the full content of any skill.");
-		for (const entry of ctx.skillCatalog) {
-			lines.push(`- ${entry}`);
-		}
-	}
+	lines.push(...buildSkillsSection(ctx));
+	lines.push(...buildIntegrationsSection(ctx));
+	lines.push(...buildThreadInfoSection(ctx, { skipTriggerAndChannel: true }));
+	lines.push(...buildActiveThreadsSection(ctx));
 
-	lines.push("");
-	lines.push("## Integrations");
-	lines.push("You can connect to 3,000+ third-party services via Pipedream.");
-	lines.push("- Use `list_available_integrations` to search for apps.");
-	lines.push("- Use `connect_integration` to help users connect new apps.");
-	lines.push("- Use `read_skill` to load full documentation for any connected integration.");
-	lines.push("");
+	return lines.join("\n");
+}
+
+function buildErrorRules(): string[] {
+	return [
+		"- Own errors immediately — no blame on tools, APIs, or users.",
+		"- When something fails, explain the root cause and offer a fix in the same message.",
+		"- No defensive language or hedging.",
+		"- Never fabricate URLs or data — leave blank instead.",
+	];
+}
+
+function buildSkillsSection(ctx: PromptContext): string[] {
+	if (!ctx.skillCatalog || ctx.skillCatalog.length === 0) return [];
+	const lines = [
+		"",
+		"## Skills",
+		"Use `read_skill` to load the full content of any skill.",
+		'Skill descriptions follow the format: "[What it does]. Use when [trigger]. Do NOT use for [anti-trigger]."',
+	];
+	for (const entry of ctx.skillCatalog) {
+		lines.push(`- ${entry}`);
+	}
+	return lines;
+}
+
+function buildIntegrationsSection(ctx: PromptContext): string[] {
+	const lines = [
+		"",
+		"## Integrations",
+		"You can connect to 3,000+ third-party services via Pipedream.",
+		"- Use `list_available_integrations` to search for apps.",
+		"- Use `connect_integration` to help users connect new apps.",
+		"- Use `read_skill` to load full documentation for any connected integration.",
+		"",
+	];
 
 	if (ctx.integrationCatalog && ctx.integrationCatalog.length > 0) {
 		lines.push("Connected integrations:");
@@ -137,5 +188,34 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 		lines.push("Connected integrations: None yet — use `list_available_integrations` to explore.");
 	}
 
-	return lines.join("\n");
+	return lines;
+}
+
+function buildThreadInfoSection(
+	ctx: PromptContext,
+	options?: { skipTriggerAndChannel?: boolean },
+): string[] {
+	const lines: string[] = ["", "## Your Thread Info"];
+	if (!options?.skipTriggerAndChannel) {
+		lines.push(`- Trigger: ${triggerLabel(ctx.triggerType)}`);
+	}
+	if (ctx.threadId) {
+		lines.push(`- Thread ID: ${ctx.threadId}`);
+	}
+	if (!options?.skipTriggerAndChannel && ctx.channel) {
+		lines.push(`- Channel: ${ctx.channel}`);
+	}
+	if (ctx.cronJobName) {
+		lines.push(`- Cron job: ${ctx.cronJobName}`);
+	}
+	return lines;
+}
+
+function buildActiveThreadsSection(ctx: PromptContext): string[] {
+	if (!ctx.activeThreads || ctx.activeThreads.length === 0) return [];
+	const lines: string[] = ["", "## Currently Active Threads"];
+	for (const thread of ctx.activeThreads) {
+		lines.push(`- ${thread}`);
+	}
+	return lines;
 }

@@ -8,6 +8,7 @@ import {
 } from "@openviktor/shared";
 import type { App } from "@slack/bolt";
 import type { AgentRunner } from "../agent/runner.js";
+import { fetchActiveThreads } from "../thread/index.js";
 import { registerWorkspaceToken } from "../tool-gateway/server.js";
 import { type SlackClient, resolveMember, resolveWorkspace, stripBotMention } from "./resolve.js";
 
@@ -120,9 +121,10 @@ async function handleMessage(
 	const triggerType = isDm ? "DM" : "MENTION";
 	const userMessage = stripBotMention(msg.text as string, botUserId);
 
-	const [skillCatalog, integrationCatalog] = await Promise.all([
+	const [skillCatalog, integrationCatalog, activeThreads] = await Promise.all([
 		fetchSkillCatalog(ctx.prisma, workspace.id),
 		fetchIntegrationCatalog(ctx.prisma, workspace.id),
+		fetchActiveThreads(ctx.prisma, workspace.id),
 	]);
 
 	try {
@@ -141,6 +143,7 @@ async function handleMessage(
 				userName: member.displayName ?? undefined,
 				skillCatalog,
 				integrationCatalog,
+				activeThreads,
 			},
 		});
 
@@ -182,7 +185,9 @@ async function safeReply(
 ): Promise<void> {
 	try {
 		await say({
-			text: text ?? "Sorry, I ran into an error processing your request. Please try again.",
+			text:
+				text ??
+				"Something went wrong while processing your request. Let me know if you'd like me to try again.",
 			thread_ts: threadTs,
 		});
 	} catch {
@@ -277,9 +282,10 @@ async function handleMention(
 
 	const userMessage = stripBotMention(event.text, botUserId);
 
-	const [skillCatalog, integrationCatalog] = await Promise.all([
+	const [skillCatalog, integrationCatalog, activeThreads] = await Promise.all([
 		fetchSkillCatalog(ctx.prisma, workspace.id),
 		fetchIntegrationCatalog(ctx.prisma, workspace.id),
+		fetchActiveThreads(ctx.prisma, workspace.id),
 	]);
 
 	ctx.logger.info({ channel: event.channel, user: event.user }, "Mention received");
@@ -300,6 +306,7 @@ async function handleMention(
 				userName: member.displayName ?? undefined,
 				skillCatalog,
 				integrationCatalog,
+				activeThreads,
 			},
 		});
 
