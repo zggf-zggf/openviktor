@@ -245,6 +245,9 @@ model CronJob {
   enabled         Boolean      @default(true)
   type            CronJobType  @default(CUSTOM)
   slackChannel    String?      @map("slack_channel")
+  model           String?
+  scriptCommand   String?      @map("script_command")
+  dependentPaths  String[]     @default([]) @map("dependent_paths")
   lastRunAt       DateTime?    @map("last_run_at")
   nextRunAt       DateTime?    @map("next_run_at")
   runCount        Int          @default(0) @map("run_count")
@@ -264,6 +267,7 @@ enum CronJobType {
   HEARTBEAT
   DISCOVERY
   CUSTOM
+  SCRIPT
 }
 
 // ─── Integrations ──────────────────────────────────────

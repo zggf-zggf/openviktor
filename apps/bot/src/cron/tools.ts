@@ -23,10 +23,21 @@ export const createCronJobDefinition: LLMToolDefinition = {
 				type: "number",
 				description: "Cost tier 1-3 (1=cheap/haiku, 2=standard/sonnet, 3=full/opus). Default: 1",
 			},
+			model: {
+				type: "string",
+				description:
+					"Override the tier-based model selection with a specific model ID (e.g. 'claude-opus-4-20250514'). When set, cost_tier is ignored for model selection.",
+			},
 			condition_script: {
 				type: "string",
 				description:
 					"TypeScript condition body. Return true to run, false to skip. Has access to ctx (workspaceId, cronJobId, lastRunAt) and helpers (hasNewSlackMessages, isWithinBudget, hasActiveThreads).",
+			},
+			dependent_paths: {
+				type: "array",
+				items: { type: "string" },
+				description:
+					"Names of other cron jobs that must complete successfully since this job's last run before it will execute. Enables pipeline orchestration.",
 			},
 			slack_channel: {
 				type: "string",
@@ -35,6 +46,38 @@ export const createCronJobDefinition: LLMToolDefinition = {
 			},
 		},
 		required: ["name", "schedule", "agent_prompt"],
+	},
+};
+
+export const createScriptCronDefinition: LLMToolDefinition = {
+	name: "create_script_cron",
+	description:
+		"Create a scheduled script cron job that runs a shell command on a POSIX cron schedule. No LLM invocation — nearly free. Exit code 0 = success, non-zero = failure.",
+	input_schema: {
+		type: "object",
+		properties: {
+			name: { type: "string", description: "Short display name for the script cron" },
+			schedule: {
+				type: "string",
+				description: "POSIX 5-field cron expression (e.g. '*/15 * * * *' for every 15 minutes)",
+			},
+			script_command: {
+				type: "string",
+				description: "Shell command to execute (e.g. 'curl -s https://api.example.com/health')",
+			},
+			description: { type: "string", description: "What this script does" },
+			dependent_paths: {
+				type: "array",
+				items: { type: "string" },
+				description:
+					"Names of other cron jobs that must complete successfully since this job's last run before it will execute.",
+			},
+			condition_script: {
+				type: "string",
+				description: "TypeScript condition body. Return true to run, false to skip.",
+			},
+		},
+		required: ["name", "schedule", "script_command"],
 	},
 };
 
@@ -93,7 +136,9 @@ export function createCronToolExecutors(
 			const agentPrompt = args.agent_prompt as string;
 			const description = (args.description as string) ?? null;
 			const costTier = (args.cost_tier as number) ?? 1;
+			const model = (args.model as string) ?? null;
 			const conditionScript = (args.condition_script as string) ?? null;
+			const dependentPaths = (args.dependent_paths as string[]) ?? [];
 			const slackChannel = (args.slack_channel as string) ?? null;
 
 			if (!isValidCronExpression(schedule)) {
@@ -120,7 +165,9 @@ export function createCronToolExecutors(
 					description,
 					agentPrompt,
 					costTier: Math.min(Math.max(costTier, 1), 3),
+					model,
 					conditionScript,
+					dependentPaths,
 					slackChannel,
 					nextRunAt,
 					type: "CUSTOM",
@@ -135,6 +182,68 @@ export function createCronToolExecutors(
 					nextRunAt: nextRunAt.toISOString(),
 					estimatedRunsPerDay: runsPerDay,
 					costTier,
+					model: model ?? undefined,
+					dependentPaths: dependentPaths.length > 0 ? dependentPaths : undefined,
+					warnings,
+				},
+				durationMs: Date.now() - start,
+			};
+		},
+
+		async create_script_cron(
+			args: Record<string, unknown>,
+			ctx: ToolExecutionContext,
+		): Promise<ToolResult> {
+			const start = Date.now();
+			const name = args.name as string;
+			const schedule = args.schedule as string;
+			const scriptCommand = args.script_command as string;
+			const description = (args.description as string) ?? null;
+			const dependentPaths = (args.dependent_paths as string[]) ?? [];
+			const conditionScript = (args.condition_script as string) ?? null;
+
+			if (!isValidCronExpression(schedule)) {
+				return {
+					output: null,
+					durationMs: Date.now() - start,
+					error: `Invalid cron expression: "${schedule}". Use a standard 5-field POSIX cron expression.`,
+				};
+			}
+
+			const warnings: string[] = [];
+			const freqWarning = checkFrequencyWarning(schedule);
+			if (freqWarning) warnings.push(freqWarning);
+
+			const now = new Date();
+			const nextRunAt = calculateNextRun(schedule, now);
+			const runsPerDay = estimateRunsPerDay(schedule);
+
+			const job = await prisma.cronJob.create({
+				data: {
+					workspaceId: ctx.workspaceId,
+					name,
+					schedule,
+					description,
+					agentPrompt: `[script_cron] ${scriptCommand}`,
+					scriptCommand,
+					costTier: 1,
+					conditionScript,
+					dependentPaths,
+					nextRunAt,
+					type: "SCRIPT",
+				},
+			});
+
+			return {
+				output: {
+					id: job.id,
+					name: job.name,
+					type: "SCRIPT",
+					schedule,
+					scriptCommand,
+					nextRunAt: nextRunAt.toISOString(),
+					estimatedRunsPerDay: runsPerDay,
+					dependentPaths: dependentPaths.length > 0 ? dependentPaths : undefined,
 					warnings,
 				},
 				durationMs: Date.now() - start,
@@ -258,6 +367,9 @@ export function createCronToolExecutors(
 				schedule: job.schedule,
 				enabled: job.enabled,
 				costTier: job.costTier,
+				model: job.model,
+				scriptCommand: job.type === "SCRIPT" ? job.scriptCommand : undefined,
+				dependentPaths: job.dependentPaths.length > 0 ? job.dependentPaths : undefined,
 				lastRunAt: job.lastRunAt?.toISOString() ?? null,
 				nextRunAt: job.nextRunAt?.toISOString() ?? null,
 				lastRunStatus: job.lastRunStatus,

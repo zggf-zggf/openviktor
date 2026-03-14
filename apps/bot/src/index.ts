@@ -31,6 +31,7 @@ import {
 	CronScheduler,
 	createCronJobDefinition,
 	createCronToolExecutors,
+	createScriptCronDefinition,
 	deleteCronJobDefinition,
 	listCronJobsDefinition,
 	triggerCronJobDefinition,
@@ -165,6 +166,7 @@ async function main(): Promise<void> {
 	const cronTools = createCronToolExecutors(prisma, scheduler);
 	const local = { localOnly: true };
 	registry.register("create_cron_job", createCronJobDefinition, cronTools.create_cron_job, local);
+	registry.register("create_script_cron", createScriptCronDefinition, cronTools.create_script_cron, local);
 	registry.register("delete_cron_job", deleteCronJobDefinition, cronTools.delete_cron_job, local);
 	registry.register(
 		"trigger_cron_job",

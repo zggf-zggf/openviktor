@@ -66,7 +66,12 @@ export function checkFrequencyWarning(schedule: string): string | null {
 	return null;
 }
 
-export function getModelForTier(costTier: number, defaultModel: string): string {
+export function getModelForTier(
+	costTier: number,
+	defaultModel: string,
+	modelOverride?: string | null,
+): string {
+	if (modelOverride) return modelOverride;
 	return DEFAULT_MODELS[costTier] ?? defaultModel;
 }
 

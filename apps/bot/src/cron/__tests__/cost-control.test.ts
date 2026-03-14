@@ -103,4 +103,16 @@ describe("getModelForTier", () => {
 	it("returns default for unknown tier", () => {
 		expect(getModelForTier(99, "my-default")).toBe("my-default");
 	});
+
+	it("uses model override when provided", () => {
+		expect(getModelForTier(1, "default", "claude-opus-4-20250514")).toBe("claude-opus-4-20250514");
+	});
+
+	it("falls back to tier when override is null", () => {
+		expect(getModelForTier(1, "default", null)).toContain("haiku");
+	});
+
+	it("falls back to tier when override is undefined", () => {
+		expect(getModelForTier(2, "default", undefined)).toContain("sonnet");
+	});
 });

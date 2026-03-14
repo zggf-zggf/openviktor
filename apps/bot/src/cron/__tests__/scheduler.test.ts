@@ -96,6 +96,9 @@ describe("CronScheduler", () => {
 			agentPrompt: "Do something",
 			conditionScript: null,
 			slackChannel: "C123",
+			model: null,
+			scriptCommand: null,
+			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
@@ -132,6 +135,9 @@ describe("CronScheduler", () => {
 			agentPrompt: "heartbeat prompt",
 			conditionScript: null,
 			slackChannel: null,
+			model: null,
+			scriptCommand: null,
+			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
@@ -161,6 +167,9 @@ describe("CronScheduler", () => {
 			agentPrompt: "Do something",
 			conditionScript: "return false;",
 			slackChannel: "C123",
+			model: null,
+			scriptCommand: null,
+			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
@@ -195,6 +204,9 @@ describe("CronScheduler", () => {
 			agentPrompt: "Do it",
 			conditionScript: null,
 			slackChannel: "C123",
+			model: null,
+			scriptCommand: null,
+			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 5,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
@@ -234,6 +246,9 @@ describe("CronScheduler", () => {
 			agentPrompt: "Do it",
 			conditionScript: null,
 			slackChannel: "C123",
+			model: null,
+			scriptCommand: null,
+			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
@@ -269,6 +284,9 @@ describe("CronScheduler", () => {
 			agentPrompt: "Base prompt",
 			conditionScript: "return false;",
 			slackChannel: "C123",
+			model: null,
+			scriptCommand: null,
+			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
 			enabled: false,
@@ -287,5 +305,307 @@ describe("CronScheduler", () => {
 				userMessage: expect.stringContaining("Extra context"),
 			}),
 		);
+	});
+
+	describe("per-cron model selection", () => {
+		it("uses job-level model override when set", async () => {
+			const runner = createMockRunner();
+			const dueJob = {
+				id: "cron-model",
+				workspaceId: "ws-1",
+				name: "Model Override",
+				schedule: "0 9 * * *",
+				type: "CUSTOM",
+				costTier: 1,
+				agentPrompt: "Do something",
+				conditionScript: null,
+				slackChannel: "C123",
+				model: "claude-opus-4-20250514",
+				scriptCommand: null,
+				dependentPaths: [],
+				lastRunAt: null,
+				runCount: 0,
+				workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+			};
+
+			const prisma = createMockPrisma([dueJob]);
+			prisma.workspace = { findUnique: vi.fn().mockResolvedValue({ settings: {} }) };
+
+			scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+			await scheduler.tick();
+			await vi.waitFor(() => expect(runner.run).toHaveBeenCalled());
+
+			expect(runner.run).toHaveBeenCalledWith(
+				expect.objectContaining({
+					model: "claude-opus-4-20250514",
+				}),
+			);
+		});
+	});
+
+	describe("script cron execution", () => {
+		it("executes script command without LLM invocation", async () => {
+			const runner = createMockRunner();
+			const dueJob = {
+				id: "script-1",
+				workspaceId: "ws-1",
+				name: "health-check",
+				schedule: "*/15 * * * *",
+				type: "SCRIPT",
+				costTier: 1,
+				agentPrompt: "[script_cron] echo ok",
+				conditionScript: null,
+				slackChannel: null,
+				model: null,
+				scriptCommand: "echo ok",
+				dependentPaths: [],
+				lastRunAt: null,
+				runCount: 0,
+				workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+			};
+
+			const prisma = createMockPrisma([dueJob]);
+			scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+			await scheduler.tick();
+			await vi.waitFor(() => expect(prisma.cronJob.update).toHaveBeenCalled());
+
+			expect(runner.run).not.toHaveBeenCalled();
+			expect(prisma.cronJob.update).toHaveBeenCalledWith(
+				expect.objectContaining({
+					where: { id: "script-1" },
+					data: expect.objectContaining({
+						lastRunStatus: "COMPLETED",
+						runCount: 1,
+					}),
+				}),
+			);
+		});
+
+		it("marks script cron as FAILED on non-zero exit code", async () => {
+			const runner = createMockRunner();
+			const dueJob = {
+				id: "script-2",
+				workspaceId: "ws-1",
+				name: "failing-check",
+				schedule: "*/15 * * * *",
+				type: "SCRIPT",
+				costTier: 1,
+				agentPrompt: "[script_cron] exit 1",
+				conditionScript: null,
+				slackChannel: null,
+				model: null,
+				scriptCommand: "exit 1",
+				dependentPaths: [],
+				lastRunAt: null,
+				runCount: 0,
+				workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+			};
+
+			const prisma = createMockPrisma([dueJob]);
+			scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+			await scheduler.tick();
+			await vi.waitFor(() => expect(prisma.cronJob.update).toHaveBeenCalled());
+
+			expect(runner.run).not.toHaveBeenCalled();
+			expect(prisma.cronJob.update).toHaveBeenCalledWith(
+				expect.objectContaining({
+					where: { id: "script-2" },
+					data: expect.objectContaining({
+						lastRunStatus: "FAILED",
+					}),
+				}),
+			);
+		});
+
+		it("triggerJob handles SCRIPT type without agent runner", async () => {
+			const runner = createMockRunner();
+			const job = {
+				id: "script-trig",
+				workspaceId: "ws-1",
+				name: "manual-script",
+				schedule: "0 9 * * *",
+				type: "SCRIPT",
+				costTier: 1,
+				agentPrompt: "[script_cron] echo triggered",
+				conditionScript: null,
+				slackChannel: null,
+				model: null,
+				scriptCommand: "echo triggered",
+				dependentPaths: [],
+				lastRunAt: null,
+				runCount: 0,
+				enabled: true,
+				workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+			};
+
+			const prisma = createMockPrisma();
+			prisma.cronJob.findFirst = vi.fn().mockResolvedValue(job);
+
+			scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+			await scheduler.triggerJob("script-trig");
+
+			expect(runner.run).not.toHaveBeenCalled();
+			expect(prisma.cronJob.update).toHaveBeenCalledWith(
+				expect.objectContaining({
+					where: { id: "script-trig" },
+					data: expect.objectContaining({
+						lastRunStatus: "COMPLETED",
+					}),
+				}),
+			);
+		});
+	});
+
+	describe("runScript", () => {
+		it("captures stdout and exit code", async () => {
+			const prisma = createMockPrisma();
+			scheduler = new CronScheduler(prisma, createMockRunner(), createMockLogger(), defaultConfig);
+			const result = await scheduler.runScript("echo hello");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout.trim()).toBe("hello");
+		});
+
+		it("captures stderr and non-zero exit code", async () => {
+			const prisma = createMockPrisma();
+			scheduler = new CronScheduler(prisma, createMockRunner(), createMockLogger(), defaultConfig);
+			const result = await scheduler.runScript("echo error >&2 && exit 42");
+			expect(result.exitCode).toBe(42);
+			expect(result.stderr.trim()).toBe("error");
+		});
+	});
+
+	describe("dependent paths", () => {
+		it("skips job when dependency has not run since last run", async () => {
+			const runner = createMockRunner();
+			const dueJob = {
+				id: "dep-1",
+				workspaceId: "ws-1",
+				name: "analysis",
+				schedule: "0 10 * * *",
+				type: "CUSTOM",
+				costTier: 2,
+				agentPrompt: "Analyze data",
+				conditionScript: null,
+				slackChannel: "C123",
+				model: null,
+				scriptCommand: null,
+				dependentPaths: ["data-fetch"],
+				lastRunAt: new Date("2026-03-14T10:00:00Z"),
+				runCount: 1,
+				workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+			};
+
+			const prisma = createMockPrisma([dueJob]);
+			prisma.workspace = { findUnique: vi.fn().mockResolvedValue({ settings: {} }) };
+			prisma.cronJob.findFirst = vi.fn().mockResolvedValue({
+				lastRunAt: new Date("2026-03-14T09:00:00Z"),
+				lastRunStatus: "COMPLETED",
+			});
+
+			scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+			await scheduler.tick();
+			await vi.waitFor(() => expect(prisma.cronJob.update).toHaveBeenCalled());
+
+			expect(runner.run).not.toHaveBeenCalled();
+		});
+
+		it("executes job when dependency has completed since last run", async () => {
+			const runner = createMockRunner();
+			const dueJob = {
+				id: "dep-2",
+				workspaceId: "ws-1",
+				name: "analysis",
+				schedule: "0 10 * * *",
+				type: "CUSTOM",
+				costTier: 2,
+				agentPrompt: "Analyze data",
+				conditionScript: null,
+				slackChannel: "C123",
+				model: null,
+				scriptCommand: null,
+				dependentPaths: ["data-fetch"],
+				lastRunAt: new Date("2026-03-14T09:00:00Z"),
+				runCount: 1,
+				workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+			};
+
+			const prisma = createMockPrisma([dueJob]);
+			prisma.workspace = { findUnique: vi.fn().mockResolvedValue({ settings: {} }) };
+			prisma.cronJob.findFirst = vi.fn().mockResolvedValue({
+				lastRunAt: new Date("2026-03-14T09:30:00Z"),
+				lastRunStatus: "COMPLETED",
+			});
+
+			scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+			await scheduler.tick();
+			await vi.waitFor(() => expect(runner.run).toHaveBeenCalled());
+
+			expect(runner.run).toHaveBeenCalled();
+		});
+
+		it("skips job when dependency last run failed", async () => {
+			const runner = createMockRunner();
+			const dueJob = {
+				id: "dep-3",
+				workspaceId: "ws-1",
+				name: "analysis",
+				schedule: "0 10 * * *",
+				type: "CUSTOM",
+				costTier: 2,
+				agentPrompt: "Analyze data",
+				conditionScript: null,
+				slackChannel: "C123",
+				model: null,
+				scriptCommand: null,
+				dependentPaths: ["data-fetch"],
+				lastRunAt: new Date("2026-03-14T09:00:00Z"),
+				runCount: 1,
+				workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+			};
+
+			const prisma = createMockPrisma([dueJob]);
+			prisma.workspace = { findUnique: vi.fn().mockResolvedValue({ settings: {} }) };
+			prisma.cronJob.findFirst = vi.fn().mockResolvedValue({
+				lastRunAt: new Date("2026-03-14T09:30:00Z"),
+				lastRunStatus: "FAILED",
+			});
+
+			scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+			await scheduler.tick();
+			await vi.waitFor(() => expect(prisma.cronJob.update).toHaveBeenCalled());
+
+			expect(runner.run).not.toHaveBeenCalled();
+		});
+
+		it("skips job when dependency cron job does not exist", async () => {
+			const runner = createMockRunner();
+			const dueJob = {
+				id: "dep-4",
+				workspaceId: "ws-1",
+				name: "analysis",
+				schedule: "0 10 * * *",
+				type: "CUSTOM",
+				costTier: 2,
+				agentPrompt: "Analyze data",
+				conditionScript: null,
+				slackChannel: "C123",
+				model: null,
+				scriptCommand: null,
+				dependentPaths: ["nonexistent"],
+				lastRunAt: new Date("2026-03-14T09:00:00Z"),
+				runCount: 1,
+				workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+			};
+
+			const prisma = createMockPrisma([dueJob]);
+			prisma.workspace = { findUnique: vi.fn().mockResolvedValue({ settings: {} }) };
+			prisma.cronJob.findFirst = vi.fn().mockResolvedValue(null);
+
+			scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+			await scheduler.tick();
+			await vi.waitFor(() => expect(prisma.cronJob.update).toHaveBeenCalled());
+
+			expect(runner.run).not.toHaveBeenCalled();
+		});
 	});
 });
