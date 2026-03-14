@@ -488,18 +488,6 @@ function resolveChannelId(args: Record<string, unknown>): string {
 	return channelId;
 }
 
-function buildMessageParams(args: Record<string, unknown>): Record<string, string> {
-	const channel = getRequiredString(args, "channel");
-	const text = getRequiredString(args, "text");
-	const threadTs = getOptionalString(args, "thread_ts");
-	const params: Record<string, string> = { channel, text };
-	if (threadTs) params.thread_ts = threadTs;
-	if (Array.isArray(args.blocks) && args.blocks.length > 0) {
-		params.blocks = JSON.stringify(args.blocks);
-	}
-	return params;
-}
-
 function parseMessageResponse(
 	data: JsonRecord,
 	fallbackChannel: string,
@@ -618,7 +606,7 @@ function parseSendMessageArgs(args: Record<string, unknown>): SendMessageArgs {
 	const text = getRequiredString(args, "text");
 	const messageType = getOptionalString(args, "message_type") ?? "regular";
 	const permissionRequestDraftIds = Array.isArray(args.permission_request_draft_ids)
-		? (args.permission_request_draft_ids as string[])
+		? args.permission_request_draft_ids.filter((id): id is string => typeof id === "string")
 		: undefined;
 	const detailedApprovalContext = getOptionalString(args, "detailed_approval_context");
 	const inputBlocks = Array.isArray(args.blocks) ? args.blocks : [];
