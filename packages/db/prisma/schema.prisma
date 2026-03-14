@@ -253,5 +253,6 @@ model CronJob {
 
 enum CronJobType {
   HEARTBEAT
+  DISCOVERY
   CUSTOM
 }

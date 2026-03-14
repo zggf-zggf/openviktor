@@ -8,6 +8,7 @@ export interface PromptContext {
 	skillCatalog?: string[];
 	cronJobName?: string;
 	heartbeatPrompt?: string;
+	discoveryPrompt?: string;
 }
 
 function triggerLabel(triggerType: TriggerType): string {
@@ -35,6 +36,15 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 			`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
 			"",
 			ctx.heartbeatPrompt,
+		];
+		return lines.join("\n");
+	}
+
+	if (ctx.discoveryPrompt) {
+		const lines = [
+			`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
+			"",
+			ctx.discoveryPrompt,
 		];
 		return lines.join("\n");
 	}

@@ -5,6 +5,7 @@ import type { AgentRunner, RunTrigger } from "../agent/runner.js";
 import { type ConditionContext, evaluateCondition } from "./condition.js";
 import { checkCostControl, getModelForTier } from "./cost-control.js";
 import { calculateNextRun } from "./cron-parser.js";
+import { buildDiscoveryPrompt } from "./discovery.js";
 import {
 	DEFAULT_THRESHOLDS,
 	type EngagementThresholds,
@@ -119,7 +120,8 @@ export class CronScheduler {
 	}
 
 	private async executeJob(job: CronJobRecord, skipCondition = false): Promise<void> {
-		const triggerType: TriggerType = job.type === "HEARTBEAT" ? "HEARTBEAT" : "CRON";
+		const triggerType: TriggerType =
+			job.type === "HEARTBEAT" ? "HEARTBEAT" : job.type === "DISCOVERY" ? "DISCOVERY" : "CRON";
 
 		try {
 			if (!skipCondition) {
@@ -149,23 +151,7 @@ export class CronScheduler {
 				}
 			}
 
-			let agentPrompt: string;
-			let heartbeatPromptForContext: string | undefined;
-
-			if (job.type === "HEARTBEAT") {
-				const learnings = await this.loadLearnings(job.workspaceId);
-				const settings = job.workspace.settings as Record<string, unknown> | null;
-				const heartbeatSettings = settings?.heartbeat as Record<string, unknown> | undefined;
-				const thresholds = {
-					...DEFAULT_THRESHOLDS,
-					...(heartbeatSettings?.thresholds as Partial<EngagementThresholds> | undefined),
-				};
-				heartbeatPromptForContext = buildHeartbeatPrompt(learnings, thresholds);
-				agentPrompt =
-					"Execute your heartbeat check-in now. Follow the instructions in your system prompt.";
-			} else {
-				agentPrompt = job.agentPrompt;
-			}
+			const { agentPrompt, heartbeatPrompt, discoveryPrompt } = await this.buildJobPrompt(job);
 
 			const model = getModelForTier(job.costTier, this.config.defaultModel);
 
@@ -174,7 +160,8 @@ export class CronScheduler {
 				channel: job.slackChannel ?? "general",
 				triggerType,
 				cronJobName: job.name,
-				heartbeatPrompt: heartbeatPromptForContext,
+				heartbeatPrompt,
+				discoveryPrompt,
 			};
 
 			const slackThreadTs = `cron-${job.id}-${Date.now()}`;
@@ -254,6 +241,38 @@ export class CronScheduler {
 				);
 			}
 		}
+	}
+
+	private async buildJobPrompt(job: CronJobRecord): Promise<{
+		agentPrompt: string;
+		heartbeatPrompt?: string;
+		discoveryPrompt?: string;
+	}> {
+		if (job.type === "HEARTBEAT") {
+			const learnings = await this.loadLearnings(job.workspaceId);
+			const settings = job.workspace.settings as Record<string, unknown> | null;
+			const heartbeatSettings = settings?.heartbeat as Record<string, unknown> | undefined;
+			const thresholds = {
+				...DEFAULT_THRESHOLDS,
+				...(heartbeatSettings?.thresholds as Partial<EngagementThresholds> | undefined),
+			};
+			return {
+				agentPrompt:
+					"Execute your heartbeat check-in now. Follow the instructions in your system prompt.",
+				heartbeatPrompt: buildHeartbeatPrompt(learnings, thresholds),
+			};
+		}
+
+		if (job.type === "DISCOVERY") {
+			const learnings = await this.loadLearnings(job.workspaceId);
+			return {
+				agentPrompt:
+					"Execute your workflow discovery run now. Follow the instructions in your system prompt.",
+				discoveryPrompt: buildDiscoveryPrompt(learnings),
+			};
+		}
+
+		return { agentPrompt: job.agentPrompt };
 	}
 
 	private async updateJobAfterSkip(job: { id: string; schedule: string }): Promise<void> {

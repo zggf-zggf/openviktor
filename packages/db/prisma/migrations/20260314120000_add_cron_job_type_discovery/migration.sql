@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "CronJobType" ADD VALUE 'DISCOVERY';
