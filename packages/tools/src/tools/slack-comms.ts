@@ -502,7 +502,9 @@ function parseSendMessageArgs(args: Record<string, unknown>): SendMessageArgs {
 		? args.permission_request_draft_ids.filter((id): id is string => typeof id === "string")
 		: undefined;
 	const detailedApprovalContext = getOptionalString(args, "detailed_approval_context");
-	const inputBlocks = Array.isArray(args.blocks) ? (convertBlocksMrkdwn(args.blocks) as unknown[]) : [];
+	const inputBlocks = Array.isArray(args.blocks)
+		? (convertBlocksMrkdwn(args.blocks) as unknown[])
+		: [];
 	const blocks =
 		messageType === "permission_request"
 			? buildPermissionRequestBlocks(
@@ -626,7 +628,9 @@ function createCoworkerUpdateSlackMessageExecutor(slackToken: string): ToolExecu
 			const channel = getRequiredString(args, "channel");
 			const timestamp = getRequiredString(args, "timestamp");
 			const text = markdownToMrkdwn(getRequiredString(args, "text"));
-			const blocks = Array.isArray(args.blocks) ? (convertBlocksMrkdwn(args.blocks) as unknown[]) : undefined;
+			const blocks = Array.isArray(args.blocks)
+				? (convertBlocksMrkdwn(args.blocks) as unknown[])
+				: undefined;
 
 			const params: Record<string, string> = { channel, ts: timestamp, text };
 			if (blocks && blocks.length > 0) {
