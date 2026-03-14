@@ -2,6 +2,7 @@ import type { PrismaClient } from "@openviktor/db";
 import type { Logger, TriggerType } from "@openviktor/shared";
 import type { PromptContext } from "../agent/prompt.js";
 import type { AgentRunner, RunTrigger } from "../agent/runner.js";
+import { fetchActiveThreads } from "../thread/index.js";
 import { type ConditionContext, evaluateCondition } from "./condition.js";
 import { checkCostControl, getModelForTier } from "./cost-control.js";
 import { calculateNextRun } from "./cron-parser.js";
@@ -155,7 +156,7 @@ export class CronScheduler {
 
 			const model = getModelForTier(job.costTier, this.config.defaultModel);
 
-			const activeThreads = await this.loadActiveThreads(job.workspaceId);
+			const activeThreads = await fetchActiveThreads(this.prisma, job.workspaceId);
 
 			const promptContext: PromptContext = {
 				workspaceName: job.workspace.slackTeamName,
@@ -288,18 +289,6 @@ export class CronScheduler {
 				nextRunAt: calculateNextRun(job.schedule, now),
 			},
 		});
-	}
-
-	private async loadActiveThreads(workspaceId: string): Promise<string[]> {
-		const threads = await this.prisma.thread.findMany({
-			where: {
-				workspaceId,
-				status: "ACTIVE",
-			},
-			select: { slackChannel: true, slackThreadTs: true },
-			take: 20,
-		});
-		return threads.map((t) => `${t.slackChannel}/${t.slackThreadTs}`);
 	}
 
 	private async loadLearnings(workspaceId: string): Promise<string[]> {

@@ -139,7 +139,7 @@ function buildInteractivePrompt(ctx: PromptContext): string {
 
 	lines.push(...buildSkillsSection(ctx));
 	lines.push(...buildIntegrationsSection(ctx));
-	lines.push(...buildThreadInfoSection(ctx));
+	lines.push(...buildThreadInfoSection(ctx, { skipTriggerAndChannel: true }));
 	lines.push(...buildActiveThreadsSection(ctx));
 
 	return lines.join("\n");
@@ -191,13 +191,18 @@ function buildIntegrationsSection(ctx: PromptContext): string[] {
 	return lines;
 }
 
-function buildThreadInfoSection(ctx: PromptContext): string[] {
+function buildThreadInfoSection(
+	ctx: PromptContext,
+	options?: { skipTriggerAndChannel?: boolean },
+): string[] {
 	const lines: string[] = ["", "## Your Thread Info"];
-	lines.push(`- Trigger: ${triggerLabel(ctx.triggerType)}`);
+	if (!options?.skipTriggerAndChannel) {
+		lines.push(`- Trigger: ${triggerLabel(ctx.triggerType)}`);
+	}
 	if (ctx.threadId) {
 		lines.push(`- Thread ID: ${ctx.threadId}`);
 	}
-	if (ctx.channel) {
+	if (!options?.skipTriggerAndChannel && ctx.channel) {
 		lines.push(`- Channel: ${ctx.channel}`);
 	}
 	if (ctx.cronJobName) {

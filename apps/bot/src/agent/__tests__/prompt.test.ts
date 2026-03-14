@@ -93,11 +93,10 @@ describe("buildSystemPrompt", () => {
 		expect(prompt).toContain("No defensive language");
 	});
 
-	it("includes thread info section", () => {
+	it("includes thread info section with thread ID", () => {
 		const prompt = buildSystemPrompt(makeContext({ threadId: "thread-123", channel: "C12345" }));
 		expect(prompt).toContain("## Your Thread Info");
 		expect(prompt).toContain("Thread ID: thread-123");
-		expect(prompt).toContain("Channel: C12345");
 	});
 
 	it("includes active threads when provided", () => {

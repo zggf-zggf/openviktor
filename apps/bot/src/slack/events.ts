@@ -8,6 +8,7 @@ import {
 } from "@openviktor/shared";
 import type { App } from "@slack/bolt";
 import type { AgentRunner } from "../agent/runner.js";
+import { fetchActiveThreads } from "../thread/index.js";
 import { registerWorkspaceToken } from "../tool-gateway/server.js";
 import { type SlackClient, resolveMember, resolveWorkspace, stripBotMention } from "./resolve.js";
 
@@ -53,18 +54,6 @@ async function fetchSkillCatalog(prisma: PrismaClient, workspaceId: string): Pro
 		const desc = s.description ? ` — ${s.description}` : "";
 		return `${s.name} (v${s.version})${desc}`;
 	});
-}
-
-async function fetchActiveThreads(prisma: PrismaClient, workspaceId: string): Promise<string[]> {
-	const threads = await prisma.thread.findMany({
-		where: {
-			workspaceId,
-			status: "ACTIVE",
-		},
-		select: { slackChannel: true, slackThreadTs: true },
-		take: 20,
-	});
-	return threads.map((t) => `${t.slackChannel}/${t.slackThreadTs}`);
 }
 
 async function fetchIntegrationCatalog(

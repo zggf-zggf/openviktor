@@ -7,3 +7,19 @@ export {
 } from "./concurrency.js";
 export { ThreadLock } from "./lock.js";
 export { StaleThreadDetector } from "./stale.js";
+
+export async function fetchActiveThreads(
+	prisma: {
+		thread: {
+			findMany: (args: unknown) => Promise<{ slackChannel: string; slackThreadTs: string }[]>;
+		};
+	},
+	workspaceId: string,
+): Promise<string[]> {
+	const threads = await prisma.thread.findMany({
+		where: { workspaceId, status: "ACTIVE" },
+		select: { slackChannel: true, slackThreadTs: true },
+		take: 20,
+	});
+	return threads.map((t) => `${t.slackChannel}/${t.slackThreadTs}`);
+}
