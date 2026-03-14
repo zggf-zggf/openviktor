@@ -11,8 +11,13 @@ export {
 	resolveSafePathStrict,
 	workspaceExists,
 } from "./workspace.js";
-export { createNativeRegistry, registerDbTools } from "./tools/index.js";
-export type { RegistryConfig } from "./tools/index.js";
+export {
+	createNativeRegistry,
+	registerDbTools,
+	registerThreadOrchestrationTools,
+} from "./tools/index.js";
+export type { RegistryConfig, ThreadOrchestrationDeps } from "./tools/index.js";
+export type { SpawnAgentRunParams } from "./tools/thread-orchestration.js";
 export {
 	listAvailableIntegrationsDefinition,
 	listWorkspaceConnectionsDefinition,

@@ -1,4 +1,11 @@
-export type TriggerType = "MENTION" | "DM" | "CRON" | "HEARTBEAT" | "DISCOVERY" | "MANUAL";
+export type TriggerType =
+	| "MENTION"
+	| "DM"
+	| "CRON"
+	| "HEARTBEAT"
+	| "DISCOVERY"
+	| "MANUAL"
+	| "SPAWN";
 
 export type RunStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
 

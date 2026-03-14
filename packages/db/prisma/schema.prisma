@@ -91,6 +91,7 @@ enum TriggerType {
   HEARTBEAT
   DISCOVERY
   MANUAL
+  SPAWN
 }
 
 enum RunStatus {
@@ -203,24 +204,31 @@ model Skill {
 // ─── Thread Orchestration ───────────────────────────────
 
 model Thread {
-  id            String       @id @default(cuid())
-  workspaceId   String       @map("workspace_id")
-  slackChannel  String       @map("slack_channel")
-  slackThreadTs String       @map("slack_thread_ts")
-  status        ThreadStatus @default(ACTIVE)
-  phase         Int          @default(0)
-  lockedBy      String?      @map("locked_by")
-  lockedAt      DateTime?    @map("locked_at")
-  metadata      Json         @default("{}")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  id              String       @id @default(cuid())
+  workspaceId     String       @map("workspace_id")
+  slackChannel    String       @map("slack_channel")
+  slackThreadTs   String       @map("slack_thread_ts")
+  path            String?      @map("path")
+  title           String?      @map("title")
+  parentThreadId  String?      @map("parent_thread_id")
+  status          ThreadStatus @default(ACTIVE)
+  phase           Int          @default(0)
+  lockedBy        String?      @map("locked_by")
+  lockedAt        DateTime?    @map("locked_at")
+  metadata        Json         @default("{}")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
 
-  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentRuns AgentRun[]
+  workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parentThread Thread?    @relation("ThreadHierarchy", fields: [parentThreadId], references: [id])
+  childThreads Thread[]   @relation("ThreadHierarchy")
+  agentRuns    AgentRun[]
 
   @@unique([workspaceId, slackChannel, slackThreadTs])
+  @@unique([workspaceId, path])
   @@index([status])
   @@index([workspaceId, status])
+  @@index([parentThreadId])
   @@map("threads")
 }
 

@@ -1,8 +1,8 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { LLMToolDefinition } from "@openviktor/shared";
 import { markdownToMrkdwn } from "@openviktor/shared";
-import type { ToolExecutionContext, ToolExecutor } from "../registry.js";
+import type { ToolExecutor } from "../registry.js";
 import { resolveSafePath } from "../workspace.js";
 
 type SlackToolName =
@@ -12,10 +12,7 @@ type SlackToolName =
 	| "coworker_delete_slack_message"
 	| "coworker_update_slack_message"
 	| "coworker_upload_to_slack"
-	| "coworker_download_from_slack"
-	| "create_thread"
-	| "send_message_to_thread"
-	| "wait_for_paths";
+	| "coworker_download_from_slack";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -172,54 +169,6 @@ export const coworkerDownloadFromSlackDefinition: LLMToolDefinition = {
 	},
 };
 
-export const createThreadDefinition: LLMToolDefinition = {
-	name: "create_thread",
-	description: "Create a new Slack thread by posting a root message.",
-	input_schema: {
-		type: "object",
-		properties: {
-			channel: { type: "string", description: "Slack channel ID" },
-			text: { type: "string", description: "Root message text" },
-		},
-		required: ["channel", "text"],
-	},
-};
-
-export const sendMessageToThreadDefinition: LLMToolDefinition = {
-	name: "send_message_to_thread",
-	description: "Send a reply into an existing Slack thread.",
-	input_schema: {
-		type: "object",
-		properties: {
-			channel: { type: "string", description: "Slack channel ID" },
-			thread_ts: { type: "string", description: "Root thread timestamp" },
-			text: { type: "string", description: "Reply text" },
-		},
-		required: ["channel", "thread_ts", "text"],
-	},
-};
-
-export const waitForPathsDefinition: LLMToolDefinition = {
-	name: "wait_for_paths",
-	description: "Wait for one or more workspace paths to appear.",
-	input_schema: {
-		type: "object",
-		properties: {
-			paths: {
-				type: "array",
-				items: { type: "string" },
-				description: "Workspace-relative paths to wait for",
-			},
-			timeout_ms: { type: "number", description: "Max wait time in milliseconds (default: 30000)" },
-			poll_interval_ms: {
-				type: "number",
-				description: "Polling interval in milliseconds (default: 500)",
-			},
-		},
-		required: ["paths"],
-	},
-};
-
 async function slackApiCall(
 	slackToken: string,
 	method: string,
@@ -307,17 +256,6 @@ interface UploadInitData {
 	fileId: string;
 }
 
-interface WaitForPathsArgs {
-	inputPaths: string[];
-	timeoutMs: number;
-	pollIntervalMs: number;
-}
-
-interface ResolvedPathTarget {
-	relative: string;
-	absolute: string;
-}
-
 function parseUploadToSlackArgs(args: Record<string, unknown>): UploadToSlackArgs {
 	const filePath = getRequiredString(args, "file_path");
 	const filename = getOptionalString(args, "filename") ?? path.basename(filePath);
@@ -364,72 +302,6 @@ function extractUploadPermalink(data: JsonRecord): string {
 	return "";
 }
 
-function parseWaitForPathsArgs(args: Record<string, unknown>): WaitForPathsArgs {
-	const rawPaths = args.paths;
-	if (!Array.isArray(rawPaths) || rawPaths.some((entry) => typeof entry !== "string")) {
-		throw new Error("Invalid or missing required argument: paths");
-	}
-	const timeoutMs = getOptionalNumber(args, "timeout_ms") ?? 30_000;
-	const pollIntervalMs = getOptionalNumber(args, "poll_interval_ms") ?? 500;
-	if (timeoutMs < 0 || pollIntervalMs <= 0) {
-		throw new Error("timeout_ms must be >= 0 and poll_interval_ms must be > 0");
-	}
-	return {
-		inputPaths: [...new Set(rawPaths as string[])],
-		timeoutMs,
-		pollIntervalMs,
-	};
-}
-
-function resolveWaitForPathTargets(
-	workspaceDir: string,
-	inputPaths: string[],
-): ResolvedPathTarget[] {
-	return inputPaths.map((targetPath) => ({
-		relative: targetPath,
-		absolute: resolveSafePath(workspaceDir, targetPath),
-	}));
-}
-
-async function markFoundPaths(found: Set<string>, targets: ResolvedPathTarget[]): Promise<void> {
-	for (const target of targets) {
-		if (found.has(target.relative)) {
-			continue;
-		}
-		try {
-			await access(target.absolute);
-			found.add(target.relative);
-		} catch {}
-	}
-}
-
-function sleep(durationMs: number): Promise<void> {
-	return new Promise<void>((resolve) => {
-		setTimeout(resolve, durationMs);
-	});
-}
-
-async function waitForResolvedPathTargets(
-	targets: ResolvedPathTarget[],
-	timeoutMs: number,
-	pollIntervalMs: number,
-): Promise<{ found: Set<string>; elapsedMs: number }> {
-	const found = new Set<string>();
-	const start = Date.now();
-
-	while (Date.now() - start <= timeoutMs) {
-		await markFoundPaths(found, targets);
-		if (found.size === targets.length) {
-			break;
-		}
-		await sleep(pollIntervalMs);
-	}
-
-	return {
-		found,
-		elapsedMs: Date.now() - start,
-	};
-}
 function createCoworkerSlackHistoryExecutor(slackToken: string): ToolExecutor {
 	return async (args) => {
 		try {
@@ -925,34 +797,6 @@ function createSendMessageToThreadExecutor(slackToken: string): ToolExecutor {
 	};
 }
 
-function createWaitForPathsExecutor(): ToolExecutor {
-	return async (args, ctx: ToolExecutionContext) => {
-		try {
-			const { inputPaths, timeoutMs, pollIntervalMs } = parseWaitForPathsArgs(args);
-			const targets = resolveWaitForPathTargets(ctx.workspaceDir, inputPaths);
-			const { found, elapsedMs } = await waitForResolvedPathTargets(
-				targets,
-				timeoutMs,
-				pollIntervalMs,
-			);
-
-			const foundList = inputPaths.filter((targetPath) => found.has(targetPath));
-			const missingList = inputPaths.filter((targetPath) => !found.has(targetPath));
-
-			return {
-				output: {
-					found: foundList,
-					missing: missingList,
-					elapsed_ms: elapsedMs,
-				},
-				durationMs: 0,
-			};
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return { output: null, durationMs: 0, error: message };
-		}
-	};
-}
 export function createSlackToolExecutors(slackToken: string): {
 	[key in SlackToolName]: ToolExecutor;
 } {
@@ -964,8 +808,5 @@ export function createSlackToolExecutors(slackToken: string): {
 		coworker_update_slack_message: createCoworkerUpdateSlackMessageExecutor(slackToken),
 		coworker_upload_to_slack: createCoworkerUploadToSlackExecutor(slackToken),
 		coworker_download_from_slack: createCoworkerDownloadFromSlackExecutor(slackToken),
-		create_thread: createCreateThreadExecutor(slackToken),
-		send_message_to_thread: createSendMessageToThreadExecutor(slackToken),
-		wait_for_paths: createWaitForPathsExecutor(),
 	};
 }

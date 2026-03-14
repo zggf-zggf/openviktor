@@ -64,10 +64,20 @@ import {
 	coworkerUpdateSlackMessageDefinition,
 	coworkerUploadToSlackDefinition,
 	createSlackToolExecutors,
+} from "./slack-comms.js";
+import {
+	type ThreadOrchestrationDeps,
+	createCreateThreadExecutor,
+	createGetPathInfoExecutor,
+	createListRunningPathsExecutor,
+	createSendMessageToThreadExecutor,
 	createThreadDefinition,
+	createWaitForPathsExecutor,
+	getPathInfoDefinition,
+	listRunningPathsDefinition,
 	sendMessageToThreadDefinition,
 	waitForPathsDefinition,
-} from "./slack-comms.js";
+} from "./thread-orchestration.js";
 import { viewImageDefinition, viewImageExecutor } from "./view-image.js";
 import { workspaceTreeDefinition, workspaceTreeExecutor } from "./workspace-tree.js";
 
@@ -169,14 +179,6 @@ export function createNativeRegistry(config: RegistryConfig = {}): ToolRegistry 
 			coworkerDownloadFromSlackDefinition,
 			slackComms.coworker_download_from_slack,
 		);
-		registry.register("create_thread", createThreadDefinition, slackComms.create_thread);
-		registry.register(
-			"send_message_to_thread",
-			sendMessageToThreadDefinition,
-			slackComms.send_message_to_thread,
-		);
-		registry.register("wait_for_paths", waitForPathsDefinition, slackComms.wait_for_paths);
-
 		const slackAdmin = createSlackAdminExecutors(config.slackToken);
 		registry.register(
 			"coworker_list_slack_channels",
@@ -299,3 +301,24 @@ export {
 	extractToolSchemas,
 } from "./integrations/index.js";
 export type { IntegrationSyncHandler } from "./integrations/index.js";
+
+export type { ThreadOrchestrationDeps };
+
+export function registerThreadOrchestrationTools(
+	registry: ToolRegistry,
+	deps: ThreadOrchestrationDeps,
+): void {
+	registry.register("create_thread", createThreadDefinition, createCreateThreadExecutor(deps));
+	registry.register(
+		"send_message_to_thread",
+		sendMessageToThreadDefinition,
+		createSendMessageToThreadExecutor(deps),
+	);
+	registry.register("wait_for_paths", waitForPathsDefinition, createWaitForPathsExecutor(deps));
+	registry.register(
+		"list_running_paths",
+		listRunningPathsDefinition,
+		createListRunningPathsExecutor(deps),
+	);
+	registry.register("get_path_info", getPathInfoDefinition, createGetPathInfoExecutor(deps));
+}

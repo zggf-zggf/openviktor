@@ -1,5 +1,11 @@
 import type { TriggerType } from "@openviktor/shared";
 
+export interface ActiveThreadInfo {
+	path: string;
+	title: string | null;
+	status: string;
+}
+
 export interface PromptContext {
 	workspaceName: string;
 	channel: string;
@@ -11,10 +17,11 @@ export interface PromptContext {
 	cronJobName?: string;
 	cronAgentPrompt?: string;
 	cronRunCount?: number;
-	activeThreads?: string[];
+	activeThreads?: ActiveThreadInfo[];
 	threadId?: string;
 	heartbeatPrompt?: string;
 	discoveryPrompt?: string;
+	threadPath?: string;
 }
 
 function triggerLabel(triggerType: TriggerType): string {
@@ -31,6 +38,8 @@ function triggerLabel(triggerType: TriggerType): string {
 			return "Discovery";
 		case "MANUAL":
 			return "Manual trigger";
+		case "SPAWN":
+			return "Spawned agent thread";
 		default:
 			return `Unknown (${triggerType})`;
 	}
@@ -142,6 +151,12 @@ function buildInteractivePrompt(ctx: PromptContext): string {
 	lines.push(...buildThreadInfoSection(ctx, { skipTriggerAndChannel: true }));
 	lines.push(...buildActiveThreadsSection(ctx));
 
+	if (ctx.threadPath) {
+		lines.push("");
+		lines.push("## Your Thread Info");
+		lines.push(`- Path: ${ctx.threadPath}`);
+	}
+
 	return lines.join("\n");
 }
 
@@ -215,7 +230,8 @@ function buildActiveThreadsSection(ctx: PromptContext): string[] {
 	if (!ctx.activeThreads || ctx.activeThreads.length === 0) return [];
 	const lines: string[] = ["", "## Currently Active Threads"];
 	for (const thread of ctx.activeThreads) {
-		lines.push(`- ${thread}`);
+		const label = thread.title ? `${thread.path} — ${thread.title}` : thread.path;
+		lines.push(`- ${label} (${thread.status.toLowerCase()})`);
 	}
 	return lines;
 }

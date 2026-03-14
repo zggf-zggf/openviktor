@@ -7,15 +7,32 @@ export {
 } from "./concurrency.js";
 export { ThreadLock } from "./lock.js";
 export { StaleThreadDetector } from "./stale.js";
+export {
+	generateSlackThreadPath,
+	generateCronThreadPath,
+	generateSpawnPath,
+	isChildPath,
+} from "./paths.js";
+export { createThreadSpawner, type ThreadSpawnerConfig } from "./spawner.js";
+
+export interface ActiveThreadInfo {
+	path: string;
+	title: string | null;
+	status: string;
+}
 
 export async function fetchActiveThreads(
 	prisma: Pick<import("@openviktor/db").PrismaClient, "thread">,
 	workspaceId: string,
-): Promise<string[]> {
+): Promise<ActiveThreadInfo[]> {
 	const threads = await prisma.thread.findMany({
 		where: { workspaceId, status: "ACTIVE" },
-		select: { slackChannel: true, slackThreadTs: true },
+		select: { slackChannel: true, slackThreadTs: true, title: true, status: true },
 		take: 20,
 	});
-	return threads.map((t) => `${t.slackChannel}/${t.slackThreadTs}`);
+	return threads.map((t) => ({
+		path: `${t.slackChannel}/${t.slackThreadTs}`,
+		title: t.title ?? null,
+		status: t.status,
+	}));
 }

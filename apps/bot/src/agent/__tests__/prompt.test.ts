@@ -102,7 +102,10 @@ describe("buildSystemPrompt", () => {
 	it("includes active threads when provided", () => {
 		const prompt = buildSystemPrompt(
 			makeContext({
-				activeThreads: ["C123/ts-001", "C456/ts-002"],
+				activeThreads: [
+					{ path: "C123/ts-001", title: null, status: "ACTIVE" },
+					{ path: "C456/ts-002", title: null, status: "ACTIVE" },
+				],
 			}),
 		);
 		expect(prompt).toContain("## Currently Active Threads");
@@ -167,7 +170,7 @@ describe("buildSystemPrompt — cron", () => {
 				triggerType: "CRON",
 				cronJobName: "test",
 				threadId: "cron-thread-1",
-				activeThreads: ["C999/ts-active"],
+				activeThreads: [{ path: "C999/ts-active", title: null, status: "ACTIVE" }],
 			}),
 		);
 		expect(prompt).toContain("## Your Thread Info");

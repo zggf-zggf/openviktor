@@ -9,7 +9,6 @@ import { createCustomApiIntegrationExecutor } from "../tools/create-custom-api-i
 import { fileToMarkdownExecutor } from "../tools/file-to-markdown.js";
 import { createGitExecutors } from "../tools/git.js";
 import { createQuickAiSearchExecutor } from "../tools/quick-ai-search.js";
-import { createSlackToolExecutors } from "../tools/slack-comms.js";
 import { workspaceTreeExecutor } from "../tools/workspace-tree.js";
 
 let workspaceDir: string;
@@ -159,36 +158,6 @@ describe("coworker_git", () => {
 		expect(result.error).toBeUndefined();
 		const output = result.output as { success: boolean };
 		expect(output.success).toBe(false);
-	});
-});
-
-describe("wait_for_paths", () => {
-	const waitForPaths = createSlackToolExecutors("fake-token").wait_for_paths;
-
-	it("returns found paths when files exist", async () => {
-		await writeFile(join(workspaceDir, "ready.txt"), "ok");
-		const result = await waitForPaths(
-			{ paths: ["ready.txt"], timeout_ms: 500, poll_interval_ms: 50 },
-			ctx,
-		);
-		expect(result.error).toBeUndefined();
-		const output = result.output as { found: string[] };
-		expect(output.found).toContain("ready.txt");
-	});
-
-	it("returns missing paths when files don't exist", async () => {
-		const result = await waitForPaths(
-			{ paths: ["missing.txt"], timeout_ms: 100, poll_interval_ms: 25 },
-			ctx,
-		);
-		expect(result.error).toBeUndefined();
-		const output = result.output as { missing: string[] };
-		expect(output.missing).toContain("missing.txt");
-	});
-
-	it("returns error for invalid paths array", async () => {
-		const result = await waitForPaths({ paths: "not-array" }, ctx);
-		expect(result.error).toBeDefined();
 	});
 });
 
