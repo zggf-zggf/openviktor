@@ -295,15 +295,24 @@ export class CronScheduler {
 		status: "COMPLETED" | "FAILED",
 	): Promise<void> {
 		const now = new Date();
+		const newRunCount = job.runCount + 1;
+		const reachedMaxRuns = job.maxRuns !== null && newRunCount >= job.maxRuns;
 		await this.prisma.cronJob.update({
 			where: { id: job.id },
 			data: {
 				lastRunAt: now,
-				nextRunAt: calculateNextRun(job.schedule, now),
-				runCount: job.runCount + 1,
+				nextRunAt: reachedMaxRuns ? null : calculateNextRun(job.schedule, now),
+				runCount: newRunCount,
 				lastRunStatus: status,
+				...(reachedMaxRuns ? { enabled: false } : {}),
 			},
 		});
+		if (reachedMaxRuns) {
+			this.logger.info(
+				{ cronJobId: job.id, name: job.name, maxRuns: job.maxRuns },
+				"Cron job reached max runs, auto-disabled",
+			);
+		}
 	}
 
 	private async checkConsecutiveFailures(job: CronJobRecord): Promise<void> {

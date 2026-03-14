@@ -19,6 +19,13 @@ vi.mock("../../thread/index.js", () => ({
 	fetchActiveThreads: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../../cron/onboarding.js", () => ({
+	isOnboardingNeeded: vi.fn().mockResolvedValue(false),
+	buildOnboardingPrompt: vi.fn((msg: string) => msg),
+	markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
+	seedChannelIntros: vi.fn().mockResolvedValue(undefined),
+}));
+
 function makeSlackClient() {
 	return {
 		team: { info: vi.fn().mockResolvedValue({ team: { name: "Test" } }) },
