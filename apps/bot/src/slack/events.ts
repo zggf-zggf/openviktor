@@ -8,6 +8,12 @@ import {
 } from "@openviktor/shared";
 import type { App } from "@slack/bolt";
 import type { AgentRunner } from "../agent/runner.js";
+import {
+	buildOnboardingPrompt,
+	isOnboardingNeeded,
+	markOnboardingComplete,
+	seedChannelIntros,
+} from "../cron/onboarding.js";
 import { fetchActiveThreads } from "../thread/index.js";
 import { registerWorkspaceToken } from "../tool-gateway/server.js";
 import { type SlackClient, resolveMember, resolveWorkspace, stripBotMention } from "./resolve.js";
@@ -118,8 +124,9 @@ async function handleMessage(
 
 	await addReaction(slackClient, msg.channel, msg.ts, "hourglass_flowing_sand");
 
-	const triggerType = isDm ? "DM" : "MENTION";
 	const userMessage = stripBotMention(msg.text as string, botUserId);
+	const onboarding = await isOnboardingNeeded(ctx.prisma, workspace);
+	const triggerType = onboarding ? "ONBOARDING" : isDm ? "DM" : "MENTION";
 
 	const [skillCatalog, integrationCatalog, activeThreads] = await Promise.all([
 		fetchSkillCatalog(ctx.prisma, workspace.id),
@@ -134,7 +141,7 @@ async function handleMessage(
 			triggerType,
 			slackChannel: msg.channel,
 			slackThreadTs: threadTs,
-			userMessage,
+			userMessage: onboarding ? buildOnboardingPrompt(userMessage) : userMessage,
 			promptContext: {
 				workspaceName: workspace.slackTeamName,
 				channel: msg.channel,
@@ -144,8 +151,14 @@ async function handleMessage(
 				skillCatalog,
 				integrationCatalog,
 				activeThreads,
+				...(onboarding ? { onboardingPrompt: buildOnboardingPrompt(userMessage) } : {}),
 			},
 		});
+
+		if (onboarding) {
+			await markOnboardingComplete(ctx.prisma, workspace);
+			await seedChannelIntros(ctx.prisma, workspace.id, ctx.logger);
+		}
 
 		if (!result.messageSent) {
 			await sendResponse(say, result.responseText, threadTs);
@@ -281,6 +294,8 @@ async function handleMention(
 	await addReaction(slackClient, event.channel, event.ts, "hourglass_flowing_sand");
 
 	const userMessage = stripBotMention(event.text, botUserId);
+	const onboarding = await isOnboardingNeeded(ctx.prisma, workspace);
+	const triggerType = onboarding ? "ONBOARDING" : "MENTION";
 
 	const [skillCatalog, integrationCatalog, activeThreads] = await Promise.all([
 		fetchSkillCatalog(ctx.prisma, workspace.id),
@@ -288,27 +303,33 @@ async function handleMention(
 		fetchActiveThreads(ctx.prisma, workspace.id),
 	]);
 
-	ctx.logger.info({ channel: event.channel, user: event.user }, "Mention received");
+	ctx.logger.info({ channel: event.channel, user: event.user, onboarding }, "Mention received");
 
 	try {
 		const result = await ctx.runner.run({
 			workspaceId: workspace.id,
 			memberId: member.id,
-			triggerType: "MENTION",
+			triggerType,
 			slackChannel: event.channel,
 			slackThreadTs: threadTs,
-			userMessage,
+			userMessage: onboarding ? buildOnboardingPrompt(userMessage) : userMessage,
 			promptContext: {
 				workspaceName: workspace.slackTeamName,
 				channel: event.channel,
 				slackThreadTs: threadTs,
-				triggerType: "MENTION",
+				triggerType,
 				userName: member.displayName ?? undefined,
 				skillCatalog,
 				integrationCatalog,
 				activeThreads,
+				...(onboarding ? { onboardingPrompt: buildOnboardingPrompt(userMessage) } : {}),
 			},
 		});
+
+		if (onboarding) {
+			await markOnboardingComplete(ctx.prisma, workspace);
+			await seedChannelIntros(ctx.prisma, workspace.id, ctx.logger);
+		}
 
 		if (!result.messageSent) {
 			await sendResponse(say, result.responseText, threadTs);

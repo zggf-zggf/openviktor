@@ -90,6 +90,7 @@ enum TriggerType {
   CRON
   HEARTBEAT
   DISCOVERY
+  ONBOARDING
   MANUAL
   SPAWN
 }
@@ -191,6 +192,7 @@ model Skill {
   name        String
   description String?
   content     String
+  category    String?
   version     Int      @default(1)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -198,6 +200,7 @@ model Skill {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, name])
+  @@index([workspaceId, category])
   @@map("skills")
 }
 
@@ -259,6 +262,7 @@ model CronJob {
   lastRunAt       DateTime?    @map("last_run_at")
   nextRunAt       DateTime?    @map("next_run_at")
   runCount        Int          @default(0) @map("run_count")
+  maxRuns         Int?         @map("max_runs")
   lastRunStatus   RunStatus?   @map("last_run_status")
   createdAt       DateTime     @default(now()) @map("created_at")
   updatedAt       DateTime     @updatedAt @map("updated_at")
@@ -274,6 +278,8 @@ model CronJob {
 enum CronJobType {
   HEARTBEAT
   DISCOVERY
+  ONBOARDING
+  CHANNEL_INTRO
   CUSTOM
   SCRIPT
 }

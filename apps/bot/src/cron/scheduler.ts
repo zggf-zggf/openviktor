@@ -3,6 +3,7 @@ import type { Logger, TriggerType } from "@openviktor/shared";
 import type { PromptContext } from "../agent/prompt.js";
 import type { AgentRunner, RunTrigger } from "../agent/runner.js";
 import { fetchActiveThreads } from "../thread/index.js";
+import { buildChannelIntroPrompt } from "./channel-intro.js";
 import { type ConditionContext, evaluateCondition } from "./condition.js";
 import { checkCostControl, getModelForTier } from "./cost-control.js";
 import { calculateNextRun } from "./cron-parser.js";
@@ -39,6 +40,7 @@ interface CronJobRecord {
 	dependentPaths: string[];
 	lastRunAt: Date | null;
 	runCount: number;
+	maxRuns: number | null;
 	workspace: { id: string; slackTeamName: string; settings: unknown };
 }
 
@@ -142,7 +144,13 @@ export class CronScheduler {
 		}
 
 		const triggerType: TriggerType =
-			job.type === "HEARTBEAT" ? "HEARTBEAT" : job.type === "DISCOVERY" ? "DISCOVERY" : "CRON";
+			job.type === "HEARTBEAT"
+				? "HEARTBEAT"
+				: job.type === "DISCOVERY"
+					? "DISCOVERY"
+					: job.type === "ONBOARDING"
+						? "ONBOARDING"
+						: "CRON";
 
 		try {
 			if (!skipCondition) {
@@ -150,7 +158,8 @@ export class CronScheduler {
 				if (!shouldRun) return;
 			}
 
-			const { agentPrompt, heartbeatPrompt, discoveryPrompt } = await this.buildJobPrompt(job);
+			const { agentPrompt, heartbeatPrompt, discoveryPrompt, channelIntroPrompt } =
+				await this.buildJobPrompt(job);
 
 			const model = getModelForTier(job.costTier, this.config.defaultModel, job.model);
 
@@ -166,6 +175,7 @@ export class CronScheduler {
 				activeThreads,
 				heartbeatPrompt,
 				discoveryPrompt,
+				channelIntroPrompt,
 			};
 
 			const slackThreadTs = `cron-${job.id}-${Date.now()}`;
@@ -285,15 +295,24 @@ export class CronScheduler {
 		status: "COMPLETED" | "FAILED",
 	): Promise<void> {
 		const now = new Date();
+		const newRunCount = job.runCount + 1;
+		const reachedMaxRuns = job.maxRuns !== null && newRunCount >= job.maxRuns;
 		await this.prisma.cronJob.update({
 			where: { id: job.id },
 			data: {
 				lastRunAt: now,
-				nextRunAt: calculateNextRun(job.schedule, now),
-				runCount: job.runCount + 1,
+				nextRunAt: reachedMaxRuns ? null : calculateNextRun(job.schedule, now),
+				runCount: newRunCount,
 				lastRunStatus: status,
+				...(reachedMaxRuns ? { enabled: false } : {}),
 			},
 		});
+		if (reachedMaxRuns) {
+			this.logger.info(
+				{ cronJobId: job.id, name: job.name, maxRuns: job.maxRuns },
+				"Cron job reached max runs, auto-disabled",
+			);
+		}
 	}
 
 	private async checkConsecutiveFailures(job: CronJobRecord): Promise<void> {
@@ -451,7 +470,16 @@ export class CronScheduler {
 		agentPrompt: string;
 		heartbeatPrompt?: string;
 		discoveryPrompt?: string;
+		channelIntroPrompt?: string;
 	}> {
+		if (job.type === "CHANNEL_INTRO") {
+			return {
+				agentPrompt:
+					"Execute your channel introduction now. Follow the instructions in your system prompt.",
+				channelIntroPrompt: buildChannelIntroPrompt(job.runCount),
+			};
+		}
+
 		if (job.type === "HEARTBEAT") {
 			const learnings = await this.loadLearnings(job.workspaceId);
 			const settings = job.workspace.settings as Record<string, unknown> | null;

@@ -4,6 +4,7 @@ export type TriggerType =
 	| "CRON"
 	| "HEARTBEAT"
 	| "DISCOVERY"
+	| "ONBOARDING"
 	| "MANUAL"
 	| "SPAWN";
 

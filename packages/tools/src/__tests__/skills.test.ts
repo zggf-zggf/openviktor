@@ -144,6 +144,7 @@ describe("write_skill", () => {
 				name: "team",
 				description: "Team profiles",
 				content: "# Team",
+				category: null,
 			},
 		});
 	});

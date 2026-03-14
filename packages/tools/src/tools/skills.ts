@@ -47,6 +47,11 @@ export const writeSkillDefinition: LLMToolDefinition = {
 				type: "string",
 				description: "The full skill content",
 			},
+			category: {
+				type: "string",
+				description:
+					'Skill category for organization. Standard categories: "company" (company context), "team" (team profiles), "user:{slack_id}" (per-user preferences).',
+			},
 		},
 		required: ["name", "content"],
 	},
@@ -122,6 +127,7 @@ export function createWriteSkillExecutor(prisma: PrismaClient): ToolExecutor {
 		const name = args.name.trim();
 		const content = args.content.trim();
 		const description = typeof args.description === "string" ? args.description : null;
+		const category = typeof args.category === "string" ? args.category.trim() : null;
 
 		const result = await prisma.skill.upsert({
 			where: {
@@ -134,12 +140,14 @@ export function createWriteSkillExecutor(prisma: PrismaClient): ToolExecutor {
 				content,
 				description,
 				version: { increment: 1 },
+				...(category !== null ? { category } : {}),
 			},
 			create: {
 				workspaceId: ctx.workspaceId,
 				name,
 				description,
 				content,
+				category,
 			},
 		});
 

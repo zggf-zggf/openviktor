@@ -22,6 +22,8 @@ export interface PromptContext {
 	heartbeatPrompt?: string;
 	discoveryPrompt?: string;
 	threadPath?: string;
+	onboardingPrompt?: string;
+	channelIntroPrompt?: string;
 }
 
 function triggerLabel(triggerType: TriggerType): string {
@@ -36,6 +38,8 @@ function triggerLabel(triggerType: TriggerType): string {
 			return "Heartbeat check-in";
 		case "DISCOVERY":
 			return "Discovery";
+		case "ONBOARDING":
+			return "First-install onboarding";
 		case "MANUAL":
 			return "Manual trigger";
 		case "SPAWN":
@@ -45,18 +49,36 @@ function triggerLabel(triggerType: TriggerType): string {
 	}
 }
 
-function identity(ctx: PromptContext): string {
-	return `You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`;
+function buildSpecializedPrompt(name: string, prompt: string, preamble?: string): string {
+	const lines = [`You are OpenViktor, an AI coworker in the "${name}" Slack workspace.`];
+	if (preamble) lines.push(preamble);
+	lines.push("", prompt);
+	return lines.join("\n");
+}
+
+function resolveSpecializedPrompt(ctx: PromptContext): string | null {
+	if (ctx.onboardingPrompt) {
+		return buildSpecializedPrompt(
+			ctx.workspaceName,
+			ctx.onboardingPrompt,
+			"This is your FIRST interaction with this workspace — make a great first impression.",
+		);
+	}
+	if (ctx.channelIntroPrompt) {
+		return buildSpecializedPrompt(ctx.workspaceName, ctx.channelIntroPrompt);
+	}
+	if (ctx.heartbeatPrompt) {
+		return buildSpecializedPrompt(ctx.workspaceName, ctx.heartbeatPrompt);
+	}
+	if (ctx.discoveryPrompt) {
+		return buildSpecializedPrompt(ctx.workspaceName, ctx.discoveryPrompt);
+	}
+	return null;
 }
 
 export function buildSystemPrompt(ctx: PromptContext): string {
-	if (ctx.heartbeatPrompt) {
-		return [identity(ctx), "", ctx.heartbeatPrompt].join("\n");
-	}
-
-	if (ctx.discoveryPrompt) {
-		return [identity(ctx), "", ctx.discoveryPrompt].join("\n");
-	}
+	const specialized = resolveSpecializedPrompt(ctx);
+	if (specialized) return specialized;
 
 	if (ctx.triggerType === "CRON") {
 		return buildCronPrompt(ctx);
@@ -67,7 +89,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 
 function buildCronPrompt(ctx: PromptContext): string {
 	const lines = [
-		identity(ctx),
+		`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
 		`You are executing a scheduled cron job: "${ctx.cronJobName ?? "Unknown"}".`,
 		"",
 	];
@@ -100,7 +122,7 @@ function buildCronPrompt(ctx: PromptContext): string {
 
 function buildInteractivePrompt(ctx: PromptContext): string {
 	const lines = [
-		identity(ctx),
+		`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
 		"You are helpful, knowledgeable, and concise. You communicate like a capable team member — clear, direct, and friendly.",
 		"",
 		"## Startup",

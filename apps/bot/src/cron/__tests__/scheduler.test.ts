@@ -101,6 +101,7 @@ describe("CronScheduler", () => {
 			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
+			maxRuns: null,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
 		};
 
@@ -140,6 +141,7 @@ describe("CronScheduler", () => {
 			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
+			maxRuns: null,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
 		};
 
@@ -172,6 +174,7 @@ describe("CronScheduler", () => {
 			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
+			maxRuns: null,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
 		};
 
@@ -209,6 +212,7 @@ describe("CronScheduler", () => {
 			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 5,
+			maxRuns: null,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
 		};
 
@@ -251,6 +255,7 @@ describe("CronScheduler", () => {
 			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
+			maxRuns: null,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
 		};
 
@@ -289,6 +294,7 @@ describe("CronScheduler", () => {
 			dependentPaths: [],
 			lastRunAt: null,
 			runCount: 0,
+			maxRuns: null,
 			enabled: false,
 			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
 		};
@@ -607,5 +613,79 @@ describe("CronScheduler", () => {
 
 			expect(runner.run).not.toHaveBeenCalled();
 		});
+	});
+
+	it("auto-disables job when maxRuns is reached", async () => {
+		const runner = createMockRunner();
+		const dueJob = {
+			id: "cron-limited",
+			workspaceId: "ws-1",
+			name: "Channel Intro",
+			schedule: "0 10 * * *",
+			type: "CHANNEL_INTRO",
+			costTier: 2,
+			agentPrompt: "Introduce yourself",
+			conditionScript: null,
+			slackChannel: null,
+			model: null,
+			scriptCommand: null,
+			dependentPaths: [],
+			lastRunAt: null,
+			runCount: 2,
+			maxRuns: 3,
+			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+		};
+
+		const prisma = createMockPrisma([dueJob]);
+		prisma.workspace = { findUnique: vi.fn().mockResolvedValue({ settings: {} }) };
+
+		scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+		await scheduler.tick();
+		await vi.waitFor(() => expect(prisma.cronJob.update).toHaveBeenCalled());
+
+		expect(prisma.cronJob.update).toHaveBeenCalledWith(
+			expect.objectContaining({
+				where: { id: "cron-limited" },
+				data: expect.objectContaining({
+					runCount: 3,
+					lastRunStatus: "COMPLETED",
+					enabled: false,
+					nextRunAt: null,
+				}),
+			}),
+		);
+	});
+
+	it("does not auto-disable when maxRuns is null", async () => {
+		const runner = createMockRunner();
+		const dueJob = {
+			id: "cron-unlimited",
+			workspaceId: "ws-1",
+			name: "Regular Job",
+			schedule: "0 9 * * *",
+			type: "CUSTOM",
+			costTier: 1,
+			agentPrompt: "Do it",
+			conditionScript: null,
+			slackChannel: "C123",
+			model: null,
+			scriptCommand: null,
+			dependentPaths: [],
+			lastRunAt: null,
+			runCount: 100,
+			maxRuns: null,
+			workspace: { id: "ws-1", slackTeamName: "Test", settings: {} },
+		};
+
+		const prisma = createMockPrisma([dueJob]);
+		prisma.workspace = { findUnique: vi.fn().mockResolvedValue({ settings: {} }) };
+
+		scheduler = new CronScheduler(prisma, runner, createMockLogger(), defaultConfig);
+		await scheduler.tick();
+		await vi.waitFor(() => expect(prisma.cronJob.update).toHaveBeenCalled());
+
+		const updateCall = prisma.cronJob.update.mock.calls[0][0];
+		expect(updateCall.data.enabled).toBeUndefined();
+		expect(updateCall.data.nextRunAt).toBeInstanceOf(Date);
 	});
 });
