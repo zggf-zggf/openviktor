@@ -91,7 +91,7 @@ export class PipedreamClient {
 		if (opts?.hasActions) params.set("has_actions", "true");
 		if (opts?.limit) params.set("limit", String(opts.limit));
 		const qs = params.toString();
-		const path = `/apps${qs ? `?${qs}` : ""}`;
+		const path = `/connect/apps${qs ? `?${qs}` : ""}`;
 		const result = await this.request<{ data: PipedreamApp[] }>("GET", path);
 		return result.data;
 	}
@@ -101,7 +101,7 @@ export class PipedreamClient {
 		params.set("app", opts.app);
 		if (opts.q) params.set("q", opts.q);
 		if (opts.limit) params.set("limit", String(opts.limit));
-		const path = `/actions?${params.toString()}`;
+		const path = `/connect/${this.config.projectId}/actions?${params.toString()}`;
 		const result = await this.request<{ data: PipedreamAction[] }>("GET", path);
 		return result.data;
 	}
@@ -120,7 +120,7 @@ export class PipedreamClient {
 
 	async configure(opts: PipedreamConfigureOptions): Promise<unknown> {
 		return this.request<unknown>("POST", `/connect/${this.config.projectId}/actions/configure`, {
-			action_key: opts.actionKey,
+			id: opts.actionKey,
 			prop_name: opts.propName,
 			external_user_id: opts.externalUserId,
 			configured_props: opts.configuredProps ?? {},
@@ -147,14 +147,38 @@ export class PipedreamClient {
 	}
 
 	async proxyRequest(opts: PipedreamProxyOptions): Promise<unknown> {
-		return this.request<unknown>("POST", `/connect/${this.config.projectId}/proxy`, {
-			app: opts.app,
-			method: opts.method,
-			url: opts.url,
+		const token = await this.getAccessToken();
+		const encodedUrl = Buffer.from(opts.url).toString("base64url");
+		const qs = new URLSearchParams({
 			external_user_id: opts.externalUserId,
-			auth_provision_id: opts.authProvisionId,
-			body: opts.body,
-			headers: opts.headers,
+			account_id: opts.authProvisionId,
 		});
+		const url = `${BASE_URL}/connect/${this.config.projectId}/proxy/${encodedUrl}?${qs}`;
+
+		const headers: Record<string, string> = {
+			Authorization: `Bearer ${token}`,
+			"Content-Type": "application/json",
+			"X-PD-Environment": this.config.environment,
+		};
+
+		if (opts.headers) {
+			for (const [key, value] of Object.entries(opts.headers)) {
+				headers[`x-pd-proxy-${key}`] = value;
+			}
+		}
+
+		const response = await fetch(url, {
+			method: opts.method,
+			headers,
+			body: opts.body ? JSON.stringify(opts.body) : undefined,
+		});
+
+		if (!response.ok) {
+			const text = await response.text();
+			throw new Error(`Pipedream proxy error (${response.status} ${opts.method} ${opts.url}): ${text}`);
+		}
+
+		if (response.status === 204) return undefined;
+		return response.json();
 	}
 }
