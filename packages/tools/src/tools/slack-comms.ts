@@ -48,21 +48,52 @@ export const coworkerSlackHistoryDefinition: LLMToolDefinition = {
 export const coworkerSendSlackMessageDefinition: LLMToolDefinition = {
 	name: "coworker_send_slack_message",
 	description:
-		"Send a Slack message to a channel or thread. Supports Block Kit for rich formatting.",
+		"Send a Slack message to a channel or thread. Supports Block Kit for rich formatting. Requires a reflection before sending — set do_send to false to suppress the message after reflection.",
 	input_schema: {
 		type: "object",
 		properties: {
-			channel: { type: "string", description: "Slack channel ID" },
+			channel_id: { type: "string", description: "Slack channel or user ID" },
 			text: { type: "string", description: "Message text (also serves as fallback for blocks)" },
-			thread_ts: { type: "string", description: "Thread timestamp (omit for top-level messages)" },
 			blocks: {
 				type: "array",
 				description:
-					"Optional Block Kit blocks for rich formatting (sections, headers, dividers, images). When provided, text becomes the fallback.",
+					"Block Kit blocks for rich formatting (sections, headers, dividers, images). When provided, text becomes the notification fallback.",
 				items: { type: "object" },
 			},
+			reflection: {
+				type: "string",
+				description:
+					"Private pre-send self-review. Evaluate: Is this helpful? Accurate? Appropriate tone? Right audience?",
+			},
+			do_send: {
+				type: "boolean",
+				description: "Set to true to send the message, false to suppress it after reflection.",
+			},
+			thread_ts: {
+				type: "string",
+				description: "Thread timestamp to reply in (omit for top-level messages)",
+			},
+			message_type: {
+				type: "string",
+				enum: ["regular", "permission_request"],
+				description: "Message type. 'permission_request' renders Approve/Reject action buttons.",
+			},
+			replace_message_ts: {
+				type: "string",
+				description:
+					"If provided, update this existing message instead of posting a new one (uses chat.update).",
+			},
+			permission_request_draft_ids: {
+				type: "array",
+				items: { type: "string" },
+				description: "Draft IDs linked to this permission request message.",
+			},
+			detailed_approval_context: {
+				type: "string",
+				description: "Additional context shown when a permission request is approved.",
+			},
 		},
-		required: ["channel", "text"],
+		required: ["channel_id", "text", "reflection", "do_send"],
 	},
 };
 
@@ -449,6 +480,14 @@ function createCoworkerSlackHistoryExecutor(slackToken: string): ToolExecutor {
 	};
 }
 
+function resolveChannelId(args: Record<string, unknown>): string {
+	const channelId = args.channel_id ?? args.channel;
+	if (typeof channelId !== "string" || channelId.length === 0) {
+		throw new Error("Invalid or missing required argument: channel_id");
+	}
+	return channelId;
+}
+
 function buildMessageParams(args: Record<string, unknown>): Record<string, string> {
 	const channel = getRequiredString(args, "channel");
 	const text = getRequiredString(args, "text");
@@ -471,20 +510,173 @@ function parseMessageResponse(
 	return { ts, channel };
 }
 
+function buildPermissionRequestBlocks(
+	text: string,
+	requestId: string,
+	detailedApprovalContext: string | undefined,
+	inputBlocks: unknown[],
+): unknown[] {
+	const blocks =
+		inputBlocks.length === 0
+			? [{ type: "section", text: { type: "mrkdwn", text } }]
+			: [...inputBlocks];
+
+	if (detailedApprovalContext) {
+		blocks.push({
+			type: "context",
+			elements: [{ type: "mrkdwn", text: detailedApprovalContext }],
+		});
+	}
+
+	blocks.push({
+		type: "actions",
+		elements: [
+			{
+				type: "button",
+				text: { type: "plain_text", text: "Approve" },
+				style: "primary",
+				action_id: "permission_approve",
+				value: requestId,
+			},
+			{
+				type: "button",
+				text: { type: "plain_text", text: "Reject" },
+				style: "danger",
+				action_id: "permission_reject",
+				value: requestId,
+			},
+		],
+	});
+	return blocks;
+}
+
+function buildSendParams(
+	channelId: string,
+	text: string,
+	threadTs: string | undefined,
+	blocks: unknown[],
+): Record<string, string> {
+	const params: Record<string, string> = { channel: channelId, text };
+	if (threadTs) params.thread_ts = threadTs;
+	if (blocks.length > 0) {
+		params.blocks = JSON.stringify(blocks);
+	}
+	return params;
+}
+
+async function execUpdateMessage(
+	slackToken: string,
+	params: Record<string, string>,
+	replaceMessageTs: string,
+	channelId: string,
+	reflection: string,
+): Promise<{ output: unknown; durationMs: number; error?: string }> {
+	const updateParams = { ...params, ts: replaceMessageTs };
+	const apiResult = await slackApiCall(slackToken, "chat.update", updateParams);
+	if (!apiResult.ok) {
+		return { output: null, durationMs: 0, error: apiResult.error };
+	}
+	return {
+		output: { status: "updated", ts: replaceMessageTs, channel: channelId, reflection },
+		durationMs: 0,
+	};
+}
+
+async function execPostMessage(
+	slackToken: string,
+	params: Record<string, string>,
+	channelId: string,
+	reflection: string,
+	messageType: string,
+): Promise<{ output: unknown; durationMs: number; error?: string }> {
+	const apiResult = await slackApiCall(slackToken, "chat.postMessage", params);
+	if (!apiResult.ok) {
+		return { output: null, durationMs: 0, error: apiResult.error };
+	}
+	const parsed = parseMessageResponse(apiResult.data, channelId);
+	if (!parsed) {
+		return { output: null, durationMs: 0, error: "Slack response missing message timestamp" };
+	}
+	return {
+		output: { status: "sent", ...parsed, reflection, message_type: messageType },
+		durationMs: 0,
+	};
+}
+
+interface SendMessageArgs {
+	channelId: string;
+	text: string;
+	reflection: string;
+	threadTs: string | undefined;
+	replaceMessageTs: string | undefined;
+	messageType: string;
+	blocks: unknown[];
+}
+
+function parseSendMessageArgs(args: Record<string, unknown>): SendMessageArgs {
+	const channelId = resolveChannelId(args);
+	const text = getRequiredString(args, "text");
+	const messageType = getOptionalString(args, "message_type") ?? "regular";
+	const permissionRequestDraftIds = Array.isArray(args.permission_request_draft_ids)
+		? (args.permission_request_draft_ids as string[])
+		: undefined;
+	const detailedApprovalContext = getOptionalString(args, "detailed_approval_context");
+	const inputBlocks = Array.isArray(args.blocks) ? args.blocks : [];
+	const blocks =
+		messageType === "permission_request"
+			? buildPermissionRequestBlocks(
+					text,
+					permissionRequestDraftIds?.[0] ?? `perm_${Date.now()}`,
+					detailedApprovalContext,
+					inputBlocks,
+				)
+			: inputBlocks;
+	return {
+		channelId,
+		text,
+		reflection: getRequiredString(args, "reflection"),
+		threadTs: getOptionalString(args, "thread_ts"),
+		replaceMessageTs: getOptionalString(args, "replace_message_ts"),
+		messageType,
+		blocks,
+	};
+}
+
 function createCoworkerSendSlackMessageExecutor(slackToken: string): ToolExecutor {
 	return async (args) => {
 		try {
-			const params = buildMessageParams(args);
-			const apiResult = await slackApiCall(slackToken, "chat.postMessage", params);
-			if (!apiResult.ok) {
-				return { output: null, durationMs: 0, error: apiResult.error };
+			const doSend = args.do_send;
+			if (typeof doSend !== "boolean") {
+				throw new Error("Invalid or missing required argument: do_send");
 			}
-
-			const parsed = parseMessageResponse(apiResult.data, params.channel);
-			if (!parsed) {
-				return { output: null, durationMs: 0, error: "Slack response missing message timestamp" };
+			const parsed = parseSendMessageArgs(args);
+			if (!doSend) {
+				return {
+					output: {
+						status: "suppressed",
+						reflection: parsed.reflection,
+						channel_id: parsed.channelId,
+					},
+					durationMs: 0,
+				};
 			}
-			return { output: parsed, durationMs: 0 };
+			const params = buildSendParams(parsed.channelId, parsed.text, parsed.threadTs, parsed.blocks);
+			if (parsed.replaceMessageTs) {
+				return execUpdateMessage(
+					slackToken,
+					params,
+					parsed.replaceMessageTs,
+					parsed.channelId,
+					parsed.reflection,
+				);
+			}
+			return execPostMessage(
+				slackToken,
+				params,
+				parsed.channelId,
+				parsed.reflection,
+				parsed.messageType,
+			);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return { output: null, durationMs: 0, error: message };
