@@ -8,7 +8,14 @@ import type {
 	TriggerType,
 } from "@openviktor/shared";
 import type { LLMMessage } from "@openviktor/shared";
-import { type ToolGatewayClient, extractToolSchemas } from "@openviktor/tools";
+import {
+	PERMISSION_POLL_INTERVAL_MS,
+	PERMISSION_TIMEOUT_MS,
+	type PermissionRequiredOutput,
+	type ToolGatewayClient,
+	extractToolSchemas,
+	isPermissionRequired,
+} from "@openviktor/tools";
 import type { ConcurrencyLimiter } from "../thread/concurrency.js";
 import { transitionPhase } from "../thread/lifecycle.js";
 import type { ThreadLock } from "../thread/lock.js";
@@ -31,6 +38,25 @@ const SEND_TOOL_NAMES = new Set([
 	"send_message_to_thread",
 	"create_thread",
 ]);
+
+export interface SlackPoster {
+	postMessage(
+		channel: string,
+		threadTs: string,
+		opts: { text: string; blocks: unknown[] },
+	): Promise<string | null>;
+}
+
+export interface ApprovalGateConfig {
+	slackPoster: SlackPoster;
+	buildPermissionMessage: (
+		requestId: string,
+		toolName: string,
+		toolInput: unknown,
+	) => { text: string; blocks: unknown[] };
+	pollIntervalMs?: number;
+	timeoutMs?: number;
+}
 
 export interface RunTrigger {
 	workspaceId: string;
@@ -69,6 +95,7 @@ export interface OrchestratorConfig {
 export class AgentRunner {
 	private toolConfig: ToolConfig | null;
 	private orchestrator: OrchestratorConfig | null;
+	private approvalGate: ApprovalGateConfig | null;
 	private messageBuffer = new Map<string, string[]>();
 
 	constructor(
@@ -77,9 +104,11 @@ export class AgentRunner {
 		private logger: Logger,
 		toolConfig?: ToolConfig,
 		orchestrator?: OrchestratorConfig,
+		approvalGate?: ApprovalGateConfig,
 	) {
 		this.toolConfig = toolConfig ?? null;
 		this.orchestrator = orchestrator ?? null;
+		this.approvalGate = approvalGate ?? null;
 	}
 
 	updateToolConfig(config: ToolConfig): void {
@@ -88,6 +117,10 @@ export class AgentRunner {
 
 	updateOrchestrator(config: OrchestratorConfig): void {
 		this.orchestrator = config;
+	}
+
+	updateApprovalGate(config: ApprovalGateConfig): void {
+		this.approvalGate = config;
 	}
 
 	injectMessage(slackChannel: string, slackThreadTs: string, text: string): void {
@@ -542,7 +575,13 @@ export class AgentRunner {
 			if (SEND_TOOL_NAMES.has(toolUse.name)) {
 				sentMessage = true;
 			}
-			const { block, rawOutput } = await this.executeToolWithOutput(toolUse, agentRunId);
+			const { block, rawOutput } = await this.executeToolWithOutput(
+				toolUse,
+				agentRunId,
+				threadId,
+				slackChannel,
+				slackThreadTs,
+			);
 			toolResults.push(block);
 			hotLoadedTools.push(...this.extractHotLoadedTools(toolUse, rawOutput, agentRunId));
 		}
@@ -558,9 +597,210 @@ export class AgentRunner {
 		return { toolResults, sentMessage, hotLoadedTools };
 	}
 
+	private async waitForApproval(
+		permissionRequestId: string,
+		agentRunId: string,
+	): Promise<{ status: "approved" } | { status: "rejected"; by: string } | { status: "timeout" }> {
+		const pollInterval = this.approvalGate?.pollIntervalMs ?? PERMISSION_POLL_INTERVAL_MS;
+		const timeout = this.approvalGate?.timeoutMs ?? PERMISSION_TIMEOUT_MS;
+		const start = Date.now();
+
+		while (Date.now() - start < timeout) {
+			await new Promise((resolve) => setTimeout(resolve, pollInterval));
+
+			const request = await this.prisma.permissionRequest.findUnique({
+				where: { id: permissionRequestId },
+			});
+
+			if (!request) {
+				this.logger.warn(
+					{ permissionRequestId, agentRunId },
+					"Permission request not found during poll",
+				);
+				return { status: "timeout" };
+			}
+
+			if (request.status === "APPROVED") {
+				return { status: "approved" };
+			}
+
+			if (request.status === "REJECTED") {
+				return { status: "rejected", by: request.approvedBy ?? "user" };
+			}
+
+			if (request.status === "EXPIRED" || new Date() >= request.expiresAt) {
+				await this.prisma.permissionRequest.updateMany({
+					where: { id: permissionRequestId, status: "PENDING" },
+					data: { status: "EXPIRED" },
+				});
+				return { status: "timeout" };
+			}
+		}
+
+		await this.prisma.permissionRequest.updateMany({
+			where: { id: permissionRequestId, status: "PENDING" },
+			data: { status: "EXPIRED" },
+		});
+		return { status: "timeout" };
+	}
+
+	private async reExecuteApprovedTool(
+		toolUse: ToolUseBlock,
+		agentRunId: string,
+		permissionRequestId: string,
+	): Promise<{ block: ContentBlock; rawOutput: Record<string, unknown> | null }> {
+		const approvedInput = {
+			...toolUse.input,
+			_agentRunId: agentRunId,
+			_approvedRequestId: permissionRequestId,
+		};
+
+		const reResult = await this.toolConfig?.client.call(toolUse.name, approvedInput);
+		if (!reResult) {
+			return {
+				block: {
+					type: "tool_result",
+					tool_use_id: toolUse.id,
+					content: "Error: Tool gateway not configured",
+					is_error: true,
+				},
+				rawOutput: null,
+			};
+		}
+
+		const status = reResult.error ? "FAILED" : "COMPLETED";
+		await this.persistToolCall(
+			agentRunId,
+			toolUse,
+			status,
+			reResult.durationMs,
+			reResult.output,
+			reResult.error,
+		);
+
+		if (reResult.error) {
+			return {
+				block: {
+					type: "tool_result",
+					tool_use_id: toolUse.id,
+					content: `Error: ${reResult.error}`,
+					is_error: true,
+				},
+				rawOutput: null,
+			};
+		}
+
+		const outputStr =
+			typeof reResult.output === "string" ? reResult.output : JSON.stringify(reResult.output);
+		const rawOutput =
+			typeof reResult.output === "object" && reResult.output !== null
+				? (reResult.output as Record<string, unknown>)
+				: null;
+
+		return {
+			block: { type: "tool_result", tool_use_id: toolUse.id, content: outputStr },
+			rawOutput,
+		};
+	}
+
+	private async handlePermissionGate(
+		permissionOutput: PermissionRequiredOutput,
+		toolUse: ToolUseBlock,
+		agentRunId: string,
+		threadId: string,
+		slackChannel?: string,
+		slackThreadTs?: string,
+	): Promise<{ block: ContentBlock; rawOutput: Record<string, unknown> | null }> {
+		const { permissionRequestId, toolName, toolInput } = permissionOutput;
+
+		if (!this.approvalGate || !slackChannel || !slackThreadTs) {
+			this.logger.warn(
+				{ agentRunId, tool: toolName },
+				"Permission required but no approval gate configured",
+			);
+			return {
+				block: {
+					type: "tool_result",
+					tool_use_id: toolUse.id,
+					content: `Permission required for ${toolName} but no approval mechanism is configured. Please ask an admin to approve.`,
+					is_error: true,
+				},
+				rawOutput: null,
+			};
+		}
+
+		const { text, blocks } = this.approvalGate.buildPermissionMessage(
+			permissionRequestId,
+			toolName,
+			toolInput,
+		);
+
+		const messageTs = await this.approvalGate.slackPoster.postMessage(slackChannel, slackThreadTs, {
+			text,
+			blocks,
+		});
+
+		if (messageTs) {
+			await this.prisma.permissionRequest.update({
+				where: { id: permissionRequestId },
+				data: { slackChannel, slackMessageTs: messageTs },
+			});
+		}
+
+		this.logger.info(
+			{ agentRunId, permissionRequestId, tool: toolName },
+			"Permission request posted, waiting for approval",
+		);
+
+		await transitionPhase(this.prisma, threadId, ThreadPhase.DRAFT_GATE);
+
+		const result = await this.waitForApproval(permissionRequestId, agentRunId);
+
+		if (result.status === "approved") {
+			this.logger.info(
+				{ agentRunId, permissionRequestId, tool: toolName },
+				"Permission approved, re-executing tool",
+			);
+			return this.reExecuteApprovedTool(toolUse, agentRunId, permissionRequestId);
+		}
+
+		if (result.status === "rejected") {
+			this.logger.info(
+				{ agentRunId, permissionRequestId, tool: toolName, by: result.by },
+				"Permission rejected",
+			);
+			return {
+				block: {
+					type: "tool_result",
+					tool_use_id: toolUse.id,
+					content: `Permission rejected by ${result.by}. The user denied this action.`,
+					is_error: true,
+				},
+				rawOutput: null,
+			};
+		}
+
+		this.logger.info(
+			{ agentRunId, permissionRequestId, tool: toolName },
+			"Permission request timed out",
+		);
+		return {
+			block: {
+				type: "tool_result",
+				tool_use_id: toolUse.id,
+				content: "Permission request timed out (5 min). Ask the user to approve and try again.",
+				is_error: true,
+			},
+			rawOutput: null,
+		};
+	}
+
 	private async executeToolWithOutput(
 		toolUse: ToolUseBlock,
 		agentRunId: string,
+		threadId?: string,
+		slackChannel?: string,
+		slackThreadTs?: string,
 	): Promise<{ block: ContentBlock; rawOutput: Record<string, unknown> | null }> {
 		if (!this.toolConfig) {
 			this.logger.warn(
@@ -586,8 +826,22 @@ export class AgentRunner {
 			};
 		}
 
+		const inputWithContext = { ...toolUse.input, _agentRunId: agentRunId };
+
 		this.logger.info({ tool: toolUse.name, agentRunId }, "Calling tool gateway");
-		const result = await this.toolConfig.client.call(toolUse.name, toolUse.input);
+		const result = await this.toolConfig.client.call(toolUse.name, inputWithContext);
+
+		if (result.output && isPermissionRequired(result.output)) {
+			return this.handlePermissionGate(
+				result.output,
+				toolUse,
+				agentRunId,
+				threadId ?? "",
+				slackChannel,
+				slackThreadTs,
+			);
+		}
+
 		const status = result.error ? "FAILED" : "COMPLETED";
 
 		await this.persistToolCall(
