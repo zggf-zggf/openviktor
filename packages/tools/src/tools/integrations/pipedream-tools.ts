@@ -56,7 +56,7 @@ export function createPipedreamActionExecutor(
 			return { output: null, durationMs: 0, error: result.error };
 		}
 
-		return { output: result.return_value ?? result.exports ?? { success: true }, durationMs: 0 };
+		return { output: result.ret ?? result.exports ?? { success: true }, durationMs: 0 };
 	};
 }
 
@@ -252,6 +252,8 @@ export function generateSkillContent(
 	lines.push("## Available Tools");
 	lines.push("");
 
+	const toolSchemas: LLMToolDefinition[] = [];
+
 	for (const action of actions) {
 		const toolName = actionKeyToToolName(appSlug, action.key);
 		lines.push(`### ${toolName}`);
@@ -267,23 +269,52 @@ export function generateSkillContent(
 			lines.push(`Parameters: ${params}`);
 		}
 		lines.push("");
+
+		toolSchemas.push({
+			name: toolName,
+			description: action.description ?? action.name,
+			input_schema: convertConfigurableProps(action.configurable_props),
+		});
 	}
 
-	lines.push(`### mcp_pd_${appSlug}_configure`);
+	const configureDef = makeConfigureDefinition(appSlug, appName);
+	lines.push(`### ${configureDef.name}`);
 	lines.push(`Discover dynamic properties like available IDs and names.`);
 	lines.push(`Parameters: action (string), prop_name (string)`);
 	lines.push("");
+	toolSchemas.push(configureDef);
 
 	for (const method of ["get", "post", "put", "patch", "delete"]) {
-		lines.push(`### mcp_pd_${appSlug}_proxy_${method}`);
+		const proxyDef = makeProxyDefinition(appSlug, appName, method.toUpperCase());
+		lines.push(`### ${proxyDef.name}`);
 		lines.push(`Raw HTTP ${method.toUpperCase()} request through ${appName} API auth.`);
 		lines.push(
 			`Parameters: url (string)${method !== "get" && method !== "delete" ? ", body (object, optional)" : ""}, headers (object, optional)`,
 		);
 		lines.push("");
+		toolSchemas.push(proxyDef);
 	}
 
+	lines.push("---TOOL_SCHEMAS---");
+	lines.push(JSON.stringify(toolSchemas));
+	lines.push("---END_TOOL_SCHEMAS---");
+
 	return lines.join("\n");
+}
+
+export function extractToolSchemas(skillContent: string): LLMToolDefinition[] | null {
+	const startMarker = "---TOOL_SCHEMAS---\n";
+	const endMarker = "\n---END_TOOL_SCHEMAS---";
+	const startIdx = skillContent.indexOf(startMarker);
+	const endIdx = skillContent.indexOf(endMarker);
+	if (startIdx === -1 || endIdx === -1) return null;
+
+	const json = skillContent.slice(startIdx + startMarker.length, endIdx);
+	try {
+		return JSON.parse(json) as LLMToolDefinition[];
+	} catch {
+		return null;
+	}
 }
 
 export interface RegisteredIntegrationTools {
@@ -320,7 +351,7 @@ export async function registerIntegrationTools(
 			skipPermissions,
 		);
 
-		registry.register(toolName, definition, executor);
+		registry.register(toolName, definition, executor, { localOnly: true, discoverable: true });
 		toolNames.push(toolName);
 
 		await prisma.toolDefinition.upsert({
@@ -362,6 +393,7 @@ export async function registerIntegrationTools(
 		configureDef.name,
 		configureDef,
 		createPipedreamConfigureExecutor(client, account),
+		{ localOnly: true, discoverable: true },
 	);
 	toolNames.push(configureDef.name);
 
@@ -373,6 +405,7 @@ export async function registerIntegrationTools(
 			proxyDef.name,
 			proxyDef,
 			createPipedreamProxyExecutor(client, prisma, account, method, skipPermissions),
+			{ localOnly: true, discoverable: true },
 		);
 		toolNames.push(proxyDef.name);
 	}
@@ -487,7 +520,7 @@ export async function restoreToolsFromDb(
 			skipPermissions,
 		);
 
-		registry.register(td.name, definition, executor);
+		registry.register(td.name, definition, executor, { localOnly: true, discoverable: true });
 		restored.push(td.name);
 	}
 
@@ -523,6 +556,7 @@ export async function restoreToolsFromDb(
 				configureDef.name,
 				configureDef,
 				createPipedreamConfigureExecutor(client, account),
+				{ localOnly: true, discoverable: true },
 			);
 			restored.push(configureDef.name);
 		}
@@ -535,6 +569,7 @@ export async function restoreToolsFromDb(
 					proxyDef.name,
 					proxyDef,
 					createPipedreamProxyExecutor(client, prisma, account, method, skipPermissions),
+					{ localOnly: true, discoverable: true },
 				);
 				restored.push(proxyDef.name);
 			}

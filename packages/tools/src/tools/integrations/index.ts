@@ -16,6 +16,7 @@ export {
 	unregisterIntegrationTools,
 	restoreToolsFromDb,
 	generateSkillContent,
+	extractToolSchemas,
 } from "./pipedream-tools.js";
 export { convertConfigurableProps, actionKeyToToolName } from "./schema-converter.js";
 export { createIntegrationSyncHandler } from "./sync.js";

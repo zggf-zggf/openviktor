@@ -15,6 +15,8 @@ export type ToolExecutor = (
 interface RegisteredTool {
 	definition: LLMToolDefinition;
 	executor: ToolExecutor;
+	localOnly: boolean;
+	discoverable: boolean;
 }
 
 const CIRCUIT_BREAKER_THRESHOLD = 3;
@@ -23,12 +25,30 @@ export class ToolRegistry {
 	private tools = new Map<string, RegisteredTool>();
 	private failures = new Map<string, number>();
 
-	register(name: string, definition: LLMToolDefinition, executor: ToolExecutor): void {
-		this.tools.set(name, { definition, executor });
+	register(
+		name: string,
+		definition: LLMToolDefinition,
+		executor: ToolExecutor,
+		opts?: { localOnly?: boolean; discoverable?: boolean },
+	): void {
+		this.tools.set(name, {
+			definition,
+			executor,
+			localOnly: opts?.localOnly ?? false,
+			discoverable: opts?.discoverable ?? false,
+		});
 	}
 
 	has(name: string): boolean {
 		return this.tools.has(name);
+	}
+
+	isLocalOnly(name: string): boolean {
+		return this.tools.get(name)?.localOnly ?? false;
+	}
+
+	isDiscoverable(name: string): boolean {
+		return this.tools.get(name)?.discoverable ?? false;
 	}
 
 	unregister(name: string): boolean {
@@ -37,7 +57,19 @@ export class ToolRegistry {
 	}
 
 	getDefinitions(): LLMToolDefinition[] {
+		return Array.from(this.tools.values())
+			.filter((t) => !t.discoverable)
+			.map((t) => t.definition);
+	}
+
+	getAllDefinitions(): LLMToolDefinition[] {
 		return Array.from(this.tools.values()).map((t) => t.definition);
+	}
+
+	getDiscoverableDefinitions(prefix?: string): LLMToolDefinition[] {
+		return Array.from(this.tools.entries())
+			.filter(([name, t]) => t.discoverable && (!prefix || name.startsWith(prefix)))
+			.map(([, t]) => t.definition);
 	}
 
 	async execute(

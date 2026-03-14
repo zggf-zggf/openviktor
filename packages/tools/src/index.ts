@@ -28,6 +28,7 @@ export {
 	restoreToolsFromDb,
 	convertConfigurableProps,
 	actionKeyToToolName,
+	extractToolSchemas,
 } from "./tools/index.js";
 export type { IntegrationSyncHandler } from "./tools/index.js";
 export {

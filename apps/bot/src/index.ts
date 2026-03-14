@@ -46,6 +46,7 @@ import {
 import { createConcurrencyLimiter } from "./thread/concurrency.js";
 import { ThreadLock } from "./thread/lock.js";
 import { StaleThreadDetector } from "./thread/stale.js";
+import { IntegrationWatcher } from "./integrations/watcher.js";
 import { createToolGateway, registerWorkspaceToken } from "./tool-gateway/server.js";
 
 const logger = createLogger("bot");
@@ -105,7 +106,7 @@ async function main(): Promise<void> {
 		fetch: gateway.fetch,
 	});
 	logger.info(
-		{ port: gatewayServer.port, tools: registry.getDefinitions().map((t) => t.name) },
+		{ port: gatewayServer.port, tools: registry.getAllDefinitions().map((t) => t.name) },
 		"Tool gateway started",
 	);
 
@@ -161,12 +162,14 @@ async function main(): Promise<void> {
 	});
 
 	const cronTools = createCronToolExecutors(prisma, scheduler);
-	registry.register("create_cron_job", createCronJobDefinition, cronTools.create_cron_job);
-	registry.register("delete_cron_job", deleteCronJobDefinition, cronTools.delete_cron_job);
-	registry.register("trigger_cron_job", triggerCronJobDefinition, cronTools.trigger_cron_job);
-	registry.register("list_cron_jobs", listCronJobsDefinition, cronTools.list_cron_jobs);
+	const local = { localOnly: true };
+	registry.register("create_cron_job", createCronJobDefinition, cronTools.create_cron_job, local);
+	registry.register("delete_cron_job", deleteCronJobDefinition, cronTools.delete_cron_job, local);
+	registry.register("trigger_cron_job", triggerCronJobDefinition, cronTools.trigger_cron_job, local);
+	registry.register("list_cron_jobs", listCronJobsDefinition, cronTools.list_cron_jobs, local);
 
 	// Pipedream integration tools
+	let integrationWatcher: IntegrationWatcher | undefined;
 	const hasPipedream = !!(
 		config.PIPEDREAM_CLIENT_ID &&
 		config.PIPEDREAM_CLIENT_SECRET &&
@@ -184,35 +187,57 @@ async function main(): Promise<void> {
 
 		const syncHandler = createIntegrationSyncHandler(registry, pdClient, prisma, skipPermissions);
 
+		const refreshRunnerTools = () => {
+			runner.updateToolConfig({
+				client: gatewayClient,
+				tools: registry.getDefinitions(),
+			});
+		};
+
+		integrationWatcher = new IntegrationWatcher(
+			pdClient,
+			syncHandler,
+			refreshRunnerTools,
+			createLogger("integration-watcher"),
+		);
+
 		registry.register(
 			"list_available_integrations",
 			listAvailableIntegrationsDefinition,
 			createListAvailableIntegrationsExecutor(pdClient),
+			local,
 		);
 		registry.register(
 			"list_workspace_connections",
 			listWorkspaceConnectionsDefinition,
 			createListWorkspaceConnectionsExecutor(prisma),
+			local,
 		);
 		registry.register(
 			"connect_integration",
 			connectIntegrationDefinition,
-			createConnectIntegrationExecutor(pdClient, prisma, config.SLACK_BOT_TOKEN),
+			createConnectIntegrationExecutor(pdClient, (workspaceId, appSlug) => {
+				integrationWatcher!.watch(workspaceId, appSlug);
+			}),
+			local,
 		);
 		registry.register(
 			"disconnect_integration",
 			disconnectIntegrationDefinition,
 			createDisconnectIntegrationExecutor(syncHandler),
+			local,
 		);
 		registry.register(
 			"sync_workspace_connections",
 			syncWorkspaceConnectionsDefinition,
 			createSyncWorkspaceConnectionsExecutor(syncHandler),
+			local,
 		);
 		registry.register(
 			"submit_permission_request",
 			submitPermissionRequestDefinition,
 			createSubmitPermissionRequestExecutor(prisma),
+			local,
 		);
 
 		// Restore dynamic tools from DB (restart resilience)
@@ -245,6 +270,7 @@ async function main(): Promise<void> {
 
 	const shutdown = async () => {
 		logger.info("Shutting down");
+		integrationWatcher?.stop();
 		staleDetector.stop();
 		scheduler.stop();
 		await concurrencyLimiter.shutdown();

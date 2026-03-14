@@ -76,7 +76,10 @@ export function createToolGateway(deps: GatewayDeps): {
 
 		logger.info({ tool: body.role, workspaceId }, "Tool call started");
 		const start = Date.now();
-		const result = await backend.execute(body.role, body.arguments ?? {}, ctx);
+		const useLocal = registry.isLocalOnly(body.role);
+		const result = useLocal
+			? await registry.execute(body.role, body.arguments ?? {}, ctx)
+			: await backend.execute(body.role, body.arguments ?? {}, ctx);
 		const durationMs = Date.now() - start;
 
 		if (result.error) {
@@ -96,7 +99,7 @@ export function createToolGateway(deps: GatewayDeps): {
 			const url = new URL(req.url, "http://localhost");
 
 			if (req.method === "GET" && url.pathname === "/health") {
-				return Response.json({ status: "ok", tools: registry.getDefinitions().length });
+				return Response.json({ status: "ok", tools: registry.getAllDefinitions().length });
 			}
 
 			if (req.method !== "POST" || url.pathname !== "/v1/tools/call") {

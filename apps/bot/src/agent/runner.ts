@@ -8,7 +8,7 @@ import type {
 	TriggerType,
 } from "@openviktor/shared";
 import type { LLMMessage } from "@openviktor/shared";
-import type { ToolGatewayClient } from "@openviktor/tools";
+import { type ToolGatewayClient, extractToolSchemas } from "@openviktor/tools";
 import type { ConcurrencyLimiter } from "../thread/concurrency.js";
 import { transitionPhase } from "../thread/lifecycle.js";
 import type { ThreadLock } from "../thread/lock.js";
@@ -26,6 +26,12 @@ import { type PromptContext, buildSystemPrompt } from "./prompt.js";
 
 const MAX_TOOL_ROUNDS = 20;
 
+const SEND_TOOL_NAMES = new Set([
+	"coworker_send_slack_message",
+	"send_message_to_thread",
+	"create_thread",
+]);
+
 export interface RunTrigger {
 	workspaceId: string;
 	memberId: string | null;
@@ -42,6 +48,7 @@ export interface RunResult {
 	agentRunId: string;
 	threadId: string;
 	responseText: string;
+	messageSent: boolean;
 	inputTokens: number;
 	outputTokens: number;
 	costCents: number;
@@ -62,6 +69,7 @@ export interface OrchestratorConfig {
 export class AgentRunner {
 	private toolConfig: ToolConfig | null;
 	private orchestrator: OrchestratorConfig | null;
+	private messageBuffer = new Map<string, string[]>();
 
 	constructor(
 		private prisma: PrismaClient,
@@ -80,6 +88,22 @@ export class AgentRunner {
 
 	updateOrchestrator(config: OrchestratorConfig): void {
 		this.orchestrator = config;
+	}
+
+	injectMessage(slackChannel: string, slackThreadTs: string, text: string): void {
+		const key = `${slackChannel}:${slackThreadTs}`;
+		const existing = this.messageBuffer.get(key) ?? [];
+		existing.push(text);
+		this.messageBuffer.set(key, existing);
+	}
+
+	private drainInjectedMessages(slackChannel: string, slackThreadTs: string): string[] {
+		const key = `${slackChannel}:${slackThreadTs}`;
+		const messages = this.messageBuffer.get(key) ?? [];
+		if (messages.length > 0) {
+			this.messageBuffer.delete(key);
+		}
+		return messages;
 	}
 
 	async run(trigger: RunTrigger): Promise<RunResult> {
@@ -128,9 +152,8 @@ export class AgentRunner {
 
 		let lockAcquired = false;
 		try {
-			lockAcquired = await this.acquireThreadLockOrCancel(thread.id, agentRun.id);
-
 			await transitionPhase(this.prisma, thread.id, ThreadPhase.PROMPT_INJECTION);
+			lockAcquired = await this.acquireThreadLockOrCancel(thread.id, agentRun.id);
 
 			await this.prisma.message.create({
 				data: {
@@ -145,7 +168,14 @@ export class AgentRunner {
 			await transitionPhase(this.prisma, thread.id, ThreadPhase.REASONING);
 
 			const { messages, summaryUsage } = await this.buildMessages(thread, systemPrompt);
-			const executeResult = await this.execute(agentRun.id, thread.id, messages, trigger.model);
+			const executeResult = await this.execute(
+				agentRun.id,
+				thread.id,
+				messages,
+				trigger.model,
+				trigger.slackChannel,
+				trigger.slackThreadTs,
+			);
 
 			const inputTokens = executeResult.inputTokens + (summaryUsage?.inputTokens ?? 0);
 			const outputTokens = executeResult.outputTokens + (summaryUsage?.outputTokens ?? 0);
@@ -186,10 +216,19 @@ export class AgentRunner {
 				"Agent run completed",
 			);
 
+			const remaining = this.drainInjectedMessages(trigger.slackChannel, trigger.slackThreadTs);
+			if (remaining.length > 0) {
+				this.logger.warn(
+					{ agentRunId: agentRun.id, count: remaining.length },
+					"Unprocessed injected messages at run completion",
+				);
+			}
+
 			return {
 				agentRunId: agentRun.id,
 				threadId: thread.id,
 				responseText: executeResult.responseText,
+				messageSent: executeResult.messageSent,
 				inputTokens,
 				outputTokens,
 				costCents,
@@ -362,13 +401,37 @@ export class AgentRunner {
 		};
 	}
 
+	private buildChatOptions(
+		activeTools: LLMToolDefinition[],
+		modelOverride?: string,
+	): ChatOptions | undefined {
+		if (this.toolConfig) return { tools: activeTools, model: modelOverride };
+		if (modelOverride) return { model: modelOverride };
+		return undefined;
+	}
+
+	private mergeHotLoadedTools(
+		activeTools: LLMToolDefinition[],
+		loadedSkills: Set<string>,
+		hotLoadedTools: LLMToolDefinition[],
+	): void {
+		for (const tool of hotLoadedTools) {
+			if (loadedSkills.has(tool.name)) continue;
+			activeTools.push(tool);
+			loadedSkills.add(tool.name);
+		}
+	}
+
 	private async execute(
 		agentRunId: string,
 		threadId: string,
 		messages: LLMMessage[],
 		modelOverride?: string,
+		slackChannel?: string,
+		slackThreadTs?: string,
 	): Promise<{
 		responseText: string;
+		messageSent: boolean;
 		inputTokens: number;
 		outputTokens: number;
 		costCents: number;
@@ -376,15 +439,16 @@ export class AgentRunner {
 		let totalInputTokens = 0;
 		let totalOutputTokens = 0;
 		let totalCostCents = 0;
+		let messageSent = false;
 
-		const chatOptions: ChatOptions | undefined = this.toolConfig
-			? { tools: this.toolConfig.tools, model: modelOverride }
-			: modelOverride
-				? { model: modelOverride }
-				: undefined;
+		const activeTools = this.toolConfig ? [...this.toolConfig.tools] : [];
+		const loadedSkills = new Set<string>();
 
 		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-			const response = await this.llm.chat(messages, chatOptions);
+			const response = await this.llm.chat(
+				messages,
+				this.buildChatOptions(activeTools, modelOverride),
+			);
 
 			totalInputTokens += response.inputTokens;
 			totalOutputTokens += response.outputTokens;
@@ -393,6 +457,7 @@ export class AgentRunner {
 			if (response.stopReason !== "tool_use") {
 				return {
 					responseText: extractText(response.content),
+					messageSent,
 					inputTokens: totalInputTokens,
 					outputTokens: totalOutputTokens,
 					costCents: totalCostCents,
@@ -406,6 +471,7 @@ export class AgentRunner {
 					responseText:
 						extractText(response.content) ||
 						"I ran into an issue processing your request. Please try again.",
+					messageSent,
 					inputTokens: totalInputTokens,
 					outputTokens: totalOutputTokens,
 					costCents: totalCostCents,
@@ -416,11 +482,15 @@ export class AgentRunner {
 
 			messages.push({ role: "assistant", content: response.content });
 
-			const toolResults: ContentBlock[] = [];
-			for (const toolUse of toolUses) {
-				const block = await this.executeTool(toolUse, agentRunId);
-				toolResults.push(block);
-			}
+			const { toolResults, sentMessage, hotLoadedTools } = await this.processToolRound(
+				toolUses,
+				agentRunId,
+				threadId,
+				slackChannel,
+				slackThreadTs,
+			);
+			if (sentMessage) messageSent = true;
+			this.mergeHotLoadedTools(activeTools, loadedSkills, hotLoadedTools);
 
 			messages.push({ role: "user", content: toolResults });
 
@@ -431,13 +501,67 @@ export class AgentRunner {
 		return {
 			responseText:
 				"I apologize, but I encountered an issue processing your request. Please try again.",
+			messageSent,
 			inputTokens: totalInputTokens,
 			outputTokens: totalOutputTokens,
 			costCents: totalCostCents,
 		};
 	}
 
-	private async executeTool(toolUse: ToolUseBlock, agentRunId: string): Promise<ContentBlock> {
+	private extractHotLoadedTools(
+		toolUse: ToolUseBlock,
+		rawOutput: Record<string, unknown> | null,
+		agentRunId: string,
+	): LLMToolDefinition[] {
+		if (toolUse.name !== "read_skill" || !rawOutput?.content) return [];
+		const schemas = extractToolSchemas(rawOutput.content as string);
+		if (!schemas) return [];
+		this.logger.info(
+			{ agentRunId, skill: rawOutput.name, toolCount: schemas.length },
+			"Hot-loaded tool schemas from skill",
+		);
+		return schemas;
+	}
+
+	private async processToolRound(
+		toolUses: ToolUseBlock[],
+		agentRunId: string,
+		threadId: string,
+		slackChannel?: string,
+		slackThreadTs?: string,
+	): Promise<{
+		toolResults: ContentBlock[];
+		sentMessage: boolean;
+		hotLoadedTools: LLMToolDefinition[];
+	}> {
+		let sentMessage = false;
+		const toolResults: ContentBlock[] = [];
+		const hotLoadedTools: LLMToolDefinition[] = [];
+
+		for (const toolUse of toolUses) {
+			if (SEND_TOOL_NAMES.has(toolUse.name)) {
+				sentMessage = true;
+			}
+			const { block, rawOutput } = await this.executeToolWithOutput(toolUse, agentRunId);
+			toolResults.push(block);
+			hotLoadedTools.push(...this.extractHotLoadedTools(toolUse, rawOutput, agentRunId));
+		}
+
+		if (slackChannel && slackThreadTs) {
+			const injected = this.drainInjectedMessages(slackChannel, slackThreadTs);
+			for (const msg of injected) {
+				toolResults.push({ type: "text" as const, text: `[New message from user]: ${msg}` });
+				this.logger.info({ agentRunId, threadId }, "Injected mid-run message");
+			}
+		}
+
+		return { toolResults, sentMessage, hotLoadedTools };
+	}
+
+	private async executeToolWithOutput(
+		toolUse: ToolUseBlock,
+		agentRunId: string,
+	): Promise<{ block: ContentBlock; rawOutput: Record<string, unknown> | null }> {
 		if (!this.toolConfig) {
 			this.logger.warn(
 				{ tool: toolUse.name, agentRunId },
@@ -452,10 +576,13 @@ export class AgentRunner {
 				"No tool gateway configured",
 			);
 			return {
-				type: "tool_result",
-				tool_use_id: toolUse.id,
-				content: "Error: This tool is not available. Please respond without using tools.",
-				is_error: true,
+				block: {
+					type: "tool_result",
+					tool_use_id: toolUse.id,
+					content: "Error: This tool is not available. Please respond without using tools.",
+					is_error: true,
+				},
+				rawOutput: null,
 			};
 		}
 
@@ -478,10 +605,13 @@ export class AgentRunner {
 				"Tool gateway call failed",
 			);
 			return {
-				type: "tool_result",
-				tool_use_id: toolUse.id,
-				content: `Error: ${result.error}`,
-				is_error: true,
+				block: {
+					type: "tool_result",
+					tool_use_id: toolUse.id,
+					content: `Error: ${result.error}`,
+					is_error: true,
+				},
+				rawOutput: null,
 			};
 		}
 
@@ -491,10 +621,17 @@ export class AgentRunner {
 		);
 		const outputStr =
 			typeof result.output === "string" ? result.output : JSON.stringify(result.output);
+		const rawOutput =
+			typeof result.output === "object" && result.output !== null
+				? (result.output as Record<string, unknown>)
+				: null;
 		return {
-			type: "tool_result",
-			tool_use_id: toolUse.id,
-			content: outputStr,
+			block: {
+				type: "tool_result",
+				tool_use_id: toolUse.id,
+				content: outputStr,
+			},
+			rawOutput,
 		};
 	}
 
