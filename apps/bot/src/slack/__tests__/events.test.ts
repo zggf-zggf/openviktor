@@ -15,6 +15,10 @@ vi.mock("../../tool-gateway/server.js", () => ({
 	registerWorkspaceToken: (...args: unknown[]) => mockRegisterWorkspaceToken(...args),
 }));
 
+vi.mock("../../thread/index.js", () => ({
+	fetchActiveThreads: vi.fn().mockResolvedValue([]),
+}));
+
 function makeSlackClient() {
 	return {
 		team: { info: vi.fn().mockResolvedValue({ team: { name: "Test" } }) },

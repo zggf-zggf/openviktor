@@ -8,8 +8,8 @@ import {
 } from "@openviktor/shared";
 import type { App } from "@slack/bolt";
 import type { AgentRunner } from "../agent/runner.js";
-import { fetchActiveThreads } from "../thread/index.js";
 import type { ProgressCallback } from "../agent/runner.js";
+import { fetchActiveThreads } from "../thread/index.js";
 import { registerWorkspaceToken } from "../tool-gateway/server.js";
 import { type SlackClient, resolveMember, resolveWorkspace, stripBotMention } from "./resolve.js";
 
