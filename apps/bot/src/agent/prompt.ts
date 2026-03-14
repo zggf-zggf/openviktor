@@ -89,7 +89,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 
 function buildCronPrompt(ctx: PromptContext): string {
 	const lines = [
-		identity(ctx),
+		`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
 		`You are executing a scheduled cron job: "${ctx.cronJobName ?? "Unknown"}".`,
 		"",
 	];
@@ -122,7 +122,7 @@ function buildCronPrompt(ctx: PromptContext): string {
 
 function buildInteractivePrompt(ctx: PromptContext): string {
 	const lines = [
-		identity(ctx),
+		`You are OpenViktor, an AI coworker in the "${ctx.workspaceName}" Slack workspace.`,
 		"You are helpful, knowledgeable, and concise. You communicate like a capable team member — clear, direct, and friendly.",
 		"",
 		"## Startup",
