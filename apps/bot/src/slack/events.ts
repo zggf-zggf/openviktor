@@ -8,76 +8,9 @@ import {
 } from "@openviktor/shared";
 import type { App } from "@slack/bolt";
 import type { AgentRunner } from "../agent/runner.js";
-import type { ProgressCallback } from "../agent/runner.js";
 import { fetchActiveThreads } from "../thread/index.js";
 import { registerWorkspaceToken } from "../tool-gateway/server.js";
 import { type SlackClient, resolveMember, resolveWorkspace, stripBotMention } from "./resolve.js";
-
-interface ProgressClient {
-	chat: {
-		postMessage: (params: {
-			channel: string;
-			text: string;
-			thread_ts?: string;
-		}) => Promise<{ ts?: string }>;
-		update: (params: {
-			channel: string;
-			ts: string;
-			text: string;
-		}) => Promise<unknown>;
-		delete: (params: { channel: string; ts: string }) => Promise<unknown>;
-	};
-}
-
-async function postThinkingMessage(
-	client: ProgressClient,
-	channel: string,
-	threadTs: string,
-): Promise<string | undefined> {
-	try {
-		const result = await client.chat.postMessage({
-			channel,
-			text: ":hourglass_flowing_sand: Thinking...",
-			thread_ts: threadTs,
-		});
-		return result.ts;
-	} catch {
-		return undefined;
-	}
-}
-
-function createProgressCallback(
-	client: ProgressClient,
-	channel: string,
-	thinkingTs: string | undefined,
-): ProgressCallback {
-	if (!thinkingTs) return () => {};
-
-	return (update) => {
-		if (update.phase === "tool_start") {
-			client.chat
-				.update({
-					channel,
-					ts: thinkingTs,
-					text: `:hourglass_flowing_sand: Working... (using ${update.toolName})`,
-				})
-				.catch(() => {});
-		}
-	};
-}
-
-async function deleteThinkingMessage(
-	client: ProgressClient,
-	channel: string,
-	thinkingTs: string | undefined,
-): Promise<void> {
-	if (!thinkingTs) return;
-	try {
-		await client.chat.delete({ channel, ts: thinkingTs });
-	} catch {
-		// best-effort cleanup
-	}
-}
 
 export interface BotContext {
 	prisma: PrismaClient;
@@ -183,9 +116,7 @@ async function handleMessage(
 		msg.user as string,
 	);
 
-	const progressClient = client as unknown as ProgressClient;
 	await addReaction(slackClient, msg.channel, msg.ts, "hourglass_flowing_sand");
-	const thinkingTs = await postThinkingMessage(progressClient, msg.channel, threadTs);
 
 	const triggerType = isDm ? "DM" : "MENTION";
 	const userMessage = stripBotMention(msg.text as string, botUserId);
@@ -197,29 +128,24 @@ async function handleMessage(
 	]);
 
 	try {
-		const result = await ctx.runner.run(
-			{
-				workspaceId: workspace.id,
-				memberId: member.id,
-				triggerType,
-				slackChannel: msg.channel,
+		const result = await ctx.runner.run({
+			workspaceId: workspace.id,
+			memberId: member.id,
+			triggerType,
+			slackChannel: msg.channel,
+			slackThreadTs: threadTs,
+			userMessage,
+			promptContext: {
+				workspaceName: workspace.slackTeamName,
+				channel: msg.channel,
 				slackThreadTs: threadTs,
-				userMessage,
-				promptContext: {
-					workspaceName: workspace.slackTeamName,
-					channel: msg.channel,
-					slackThreadTs: threadTs,
-					triggerType,
-					userName: member.displayName ?? undefined,
-					skillCatalog,
-					integrationCatalog,
-					activeThreads,
-				},
+				triggerType,
+				userName: member.displayName ?? undefined,
+				skillCatalog,
+				integrationCatalog,
+				activeThreads,
 			},
-			{
-				onProgress: createProgressCallback(progressClient, msg.channel, thinkingTs),
-			},
-		);
+		});
 
 		if (!result.messageSent) {
 			await sendResponse(say, result.responseText, threadTs);
@@ -234,8 +160,6 @@ async function handleMessage(
 			return;
 		}
 		throw error;
-	} finally {
-		await deleteThinkingMessage(progressClient, msg.channel, thinkingTs);
 	}
 }
 
@@ -354,9 +278,7 @@ async function handleMention(
 		event.user,
 	);
 
-	const progressClient = client as unknown as ProgressClient;
 	await addReaction(slackClient, event.channel, event.ts, "hourglass_flowing_sand");
-	const thinkingTs = await postThinkingMessage(progressClient, event.channel, threadTs);
 
 	const userMessage = stripBotMention(event.text, botUserId);
 
@@ -369,29 +291,24 @@ async function handleMention(
 	ctx.logger.info({ channel: event.channel, user: event.user }, "Mention received");
 
 	try {
-		const result = await ctx.runner.run(
-			{
-				workspaceId: workspace.id,
-				memberId: member.id,
-				triggerType: "MENTION",
-				slackChannel: event.channel,
+		const result = await ctx.runner.run({
+			workspaceId: workspace.id,
+			memberId: member.id,
+			triggerType: "MENTION",
+			slackChannel: event.channel,
+			slackThreadTs: threadTs,
+			userMessage,
+			promptContext: {
+				workspaceName: workspace.slackTeamName,
+				channel: event.channel,
 				slackThreadTs: threadTs,
-				userMessage,
-				promptContext: {
-					workspaceName: workspace.slackTeamName,
-					channel: event.channel,
-					slackThreadTs: threadTs,
-					triggerType: "MENTION",
-					userName: member.displayName ?? undefined,
-					skillCatalog,
-					integrationCatalog,
-					activeThreads,
-				},
+				triggerType: "MENTION",
+				userName: member.displayName ?? undefined,
+				skillCatalog,
+				integrationCatalog,
+				activeThreads,
 			},
-			{
-				onProgress: createProgressCallback(progressClient, event.channel, thinkingTs),
-			},
-		);
+		});
 
 		if (!result.messageSent) {
 			await sendResponse(say, result.responseText, threadTs);
@@ -406,8 +323,6 @@ async function handleMention(
 			return;
 		}
 		throw error;
-	} finally {
-		await deleteThinkingMessage(progressClient, event.channel, thinkingTs);
 	}
 }
 
