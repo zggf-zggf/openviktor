@@ -1,6 +1,6 @@
 import type { LLMResponse } from "@openviktor/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentRunner, type RunTrigger } from "../runner.js";
+import { AgentRunner, type ApprovalGateConfig, type RunTrigger } from "../runner.js";
 
 const mockChat = vi.fn();
 const mockGetModel = vi.fn().mockReturnValue("claude-sonnet-4-20250514");
@@ -288,7 +288,10 @@ describe("AgentRunner", () => {
 
 		const result = await toolRunner.run(makeTrigger());
 
-		expect(mockClient.call).toHaveBeenCalledWith("bash", { command: "echo hello world" });
+		expect(mockClient.call).toHaveBeenCalledWith("bash", {
+			command: "echo hello world",
+			_agentRunId: RUN_ID,
+		});
 
 		expect(prisma.toolCall.create).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -588,7 +591,10 @@ describe("AgentRunner", () => {
 		expect(toolNames).toContain("mcp_pd_sheets_add_row");
 
 		// Verify the hot-loaded tool was actually executed
-		expect(mockClient.call).toHaveBeenCalledWith("mcp_pd_sheets_add_row", { data: "test" });
+		expect(mockClient.call).toHaveBeenCalledWith("mcp_pd_sheets_add_row", {
+			data: "test",
+			_agentRunId: RUN_ID,
+		});
 	});
 
 	it("does not hot-load for non-integration skills", async () => {
@@ -654,5 +660,330 @@ describe("AgentRunner", () => {
 		const chatCall = mockChat.mock.calls[1][0];
 		expect(chatCall).toHaveLength(21); // system + 20 messages
 		expect(chatCall[0].content).not.toContain("Earlier in this conversation");
+	});
+});
+
+const PERMISSION_REQUEST_ID = "perm_test";
+
+function makePrismaWithPermissions() {
+	const base = makePrisma();
+	return {
+		...base,
+		permissionRequest: {
+			findUnique: vi.fn(),
+			update: vi.fn().mockResolvedValue({}),
+			updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+		},
+	};
+}
+
+function makeApprovalGate(overrides: Partial<ApprovalGateConfig> = {}): ApprovalGateConfig {
+	return {
+		slackPoster: {
+			postMessage: vi.fn().mockResolvedValue("msg_ts_123"),
+		},
+		buildPermissionMessage: vi.fn().mockReturnValue({
+			text: "Permission requested",
+			blocks: [{ type: "section", text: { type: "mrkdwn", text: "Approve?" } }],
+		}),
+		pollIntervalMs: 10,
+		timeoutMs: 100,
+		...overrides,
+	};
+}
+
+describe("AgentRunner — Approval Gate", () => {
+	let prisma: ReturnType<typeof makePrismaWithPermissions>;
+	let logger: ReturnType<typeof makeLogger>;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		prisma = makePrismaWithPermissions();
+		logger = makeLogger();
+	});
+
+	it("blocks on permission_required, posts Slack message, resumes on approval", async () => {
+		const gate = makeApprovalGate();
+		const mockClient = {
+			call: vi
+				.fn()
+				.mockResolvedValueOnce({
+					output: {
+						_permissionRequired: true,
+						permissionRequestId: PERMISSION_REQUEST_ID,
+						toolName: "mcp_pd_sheets_add_row",
+						toolInput: { data: "test" },
+					},
+					durationMs: 0,
+				})
+				.mockResolvedValueOnce({
+					output: { success: true },
+					durationMs: 15,
+				}),
+		};
+
+		prisma.permissionRequest.findUnique.mockResolvedValue({
+			id: PERMISSION_REQUEST_ID,
+			status: "APPROVED",
+			approvedBy: "U123",
+			expiresAt: new Date(Date.now() + 300_000),
+		});
+
+		const toolRunner = new AgentRunner(
+			prisma as never,
+			{ chat: mockChat, getModel: mockGetModel } as never,
+			logger as never,
+			{
+				client: mockClient as never,
+				tools: [
+					{
+						name: "mcp_pd_sheets_add_row",
+						description: "Add row",
+						input_schema: { type: "object" },
+					},
+				],
+			},
+			undefined,
+			gate,
+		);
+
+		const toolUseResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [
+				{
+					type: "tool_use",
+					id: "tool_1",
+					name: "mcp_pd_sheets_add_row",
+					input: { data: "test" },
+				},
+			],
+		});
+		const finalResponse = makeResponse({
+			content: [{ type: "text", text: "Row added!" }],
+		});
+		mockChat.mockResolvedValueOnce(toolUseResponse).mockResolvedValueOnce(finalResponse);
+
+		const result = await toolRunner.run(makeTrigger());
+
+		expect(result.responseText).toBe("Row added!");
+
+		expect(gate.slackPoster.postMessage).toHaveBeenCalledWith(
+			"C12345",
+			"1234567890.123456",
+			expect.objectContaining({ text: "Permission requested" }),
+		);
+
+		expect(gate.buildPermissionMessage).toHaveBeenCalledWith(
+			PERMISSION_REQUEST_ID,
+			"mcp_pd_sheets_add_row",
+			{ data: "test" },
+		);
+
+		expect(prisma.permissionRequest.update).toHaveBeenCalledWith(
+			expect.objectContaining({
+				where: { id: PERMISSION_REQUEST_ID },
+				data: { slackChannel: "C12345", slackMessageTs: "msg_ts_123" },
+			}),
+		);
+
+		expect(mockClient.call).toHaveBeenCalledTimes(2);
+		expect(mockClient.call).toHaveBeenLastCalledWith("mcp_pd_sheets_add_row", {
+			data: "test",
+			_agentRunId: RUN_ID,
+			_approvedRequestId: PERMISSION_REQUEST_ID,
+		});
+	});
+
+	it("returns error to LLM when permission is rejected", async () => {
+		const gate = makeApprovalGate();
+		const mockClient = {
+			call: vi.fn().mockResolvedValueOnce({
+				output: {
+					_permissionRequired: true,
+					permissionRequestId: PERMISSION_REQUEST_ID,
+					toolName: "mcp_pd_sheets_delete_row",
+					toolInput: { row_id: "42" },
+				},
+				durationMs: 0,
+			}),
+		};
+
+		prisma.permissionRequest.findUnique.mockResolvedValue({
+			id: PERMISSION_REQUEST_ID,
+			status: "REJECTED",
+			approvedBy: "U456",
+			expiresAt: new Date(Date.now() + 300_000),
+		});
+
+		const toolRunner = new AgentRunner(
+			prisma as never,
+			{ chat: mockChat, getModel: mockGetModel } as never,
+			logger as never,
+			{
+				client: mockClient as never,
+				tools: [
+					{
+						name: "mcp_pd_sheets_delete_row",
+						description: "Delete row",
+						input_schema: { type: "object" },
+					},
+				],
+			},
+			undefined,
+			gate,
+		);
+
+		const toolUseResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [
+				{
+					type: "tool_use",
+					id: "tool_1",
+					name: "mcp_pd_sheets_delete_row",
+					input: { row_id: "42" },
+				},
+			],
+		});
+		const finalResponse = makeResponse({
+			content: [{ type: "text", text: "The action was denied." }],
+		});
+		mockChat.mockResolvedValueOnce(toolUseResponse).mockResolvedValueOnce(finalResponse);
+
+		const result = await toolRunner.run(makeTrigger());
+
+		expect(result.responseText).toBe("The action was denied.");
+
+		const secondCall = mockChat.mock.calls[1][0];
+		const toolResultMsg = secondCall[secondCall.length - 1];
+		expect(toolResultMsg.content[0].is_error).toBe(true);
+		expect(toolResultMsg.content[0].content).toContain("Permission rejected by U456");
+
+		expect(mockClient.call).toHaveBeenCalledTimes(1);
+	});
+
+	it("returns timeout error when approval expires", async () => {
+		const gate = makeApprovalGate({ pollIntervalMs: 10, timeoutMs: 30 });
+		const mockClient = {
+			call: vi.fn().mockResolvedValueOnce({
+				output: {
+					_permissionRequired: true,
+					permissionRequestId: PERMISSION_REQUEST_ID,
+					toolName: "mcp_pd_sheets_add_row",
+					toolInput: {},
+				},
+				durationMs: 0,
+			}),
+		};
+
+		prisma.permissionRequest.findUnique.mockResolvedValue({
+			id: PERMISSION_REQUEST_ID,
+			status: "PENDING",
+			expiresAt: new Date(Date.now() - 1000),
+		});
+
+		const toolRunner = new AgentRunner(
+			prisma as never,
+			{ chat: mockChat, getModel: mockGetModel } as never,
+			logger as never,
+			{
+				client: mockClient as never,
+				tools: [
+					{
+						name: "mcp_pd_sheets_add_row",
+						description: "Add row",
+						input_schema: { type: "object" },
+					},
+				],
+			},
+			undefined,
+			gate,
+		);
+
+		const toolUseResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [
+				{
+					type: "tool_use",
+					id: "tool_1",
+					name: "mcp_pd_sheets_add_row",
+					input: {},
+				},
+			],
+		});
+		const finalResponse = makeResponse({
+			content: [{ type: "text", text: "Timed out." }],
+		});
+		mockChat.mockResolvedValueOnce(toolUseResponse).mockResolvedValueOnce(finalResponse);
+
+		const result = await toolRunner.run(makeTrigger());
+
+		expect(result.responseText).toBe("Timed out.");
+
+		const secondCall = mockChat.mock.calls[1][0];
+		const toolResultMsg = secondCall[secondCall.length - 1];
+		expect(toolResultMsg.content[0].is_error).toBe(true);
+		expect(toolResultMsg.content[0].content).toContain("timed out");
+
+		expect(prisma.permissionRequest.updateMany).toHaveBeenCalledWith(
+			expect.objectContaining({
+				where: { id: PERMISSION_REQUEST_ID, status: "PENDING" },
+				data: { status: "EXPIRED" },
+			}),
+		);
+	});
+
+	it("returns error when no approval gate is configured", async () => {
+		const mockClient = {
+			call: vi.fn().mockResolvedValueOnce({
+				output: {
+					_permissionRequired: true,
+					permissionRequestId: PERMISSION_REQUEST_ID,
+					toolName: "mcp_pd_sheets_add_row",
+					toolInput: {},
+				},
+				durationMs: 0,
+			}),
+		};
+
+		const toolRunner = new AgentRunner(
+			prisma as never,
+			{ chat: mockChat, getModel: mockGetModel } as never,
+			logger as never,
+			{
+				client: mockClient as never,
+				tools: [
+					{
+						name: "mcp_pd_sheets_add_row",
+						description: "Add row",
+						input_schema: { type: "object" },
+					},
+				],
+			},
+		);
+
+		const toolUseResponse = makeResponse({
+			stopReason: "tool_use",
+			content: [
+				{
+					type: "tool_use",
+					id: "tool_1",
+					name: "mcp_pd_sheets_add_row",
+					input: {},
+				},
+			],
+		});
+		const finalResponse = makeResponse({
+			content: [{ type: "text", text: "Can't do that." }],
+		});
+		mockChat.mockResolvedValueOnce(toolUseResponse).mockResolvedValueOnce(finalResponse);
+
+		const result = await toolRunner.run(makeTrigger());
+
+		expect(result.responseText).toBe("Can't do that.");
+
+		const secondCall = mockChat.mock.calls[1][0];
+		const toolResultMsg = secondCall[secondCall.length - 1];
+		expect(toolResultMsg.content[0].is_error).toBe(true);
+		expect(toolResultMsg.content[0].content).toContain("no approval mechanism");
 	});
 });

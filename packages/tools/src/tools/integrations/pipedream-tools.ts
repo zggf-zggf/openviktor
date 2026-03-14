@@ -39,6 +39,7 @@ export function createPipedreamActionExecutor(
 
 		const configuredProps: Record<string, unknown> = { ...args };
 		configuredProps._agentRunId = undefined;
+		configuredProps._approvedRequestId = undefined;
 
 		if (action.appPropName) {
 			configuredProps[action.appPropName] = {
@@ -132,6 +133,21 @@ async function requestPermission(
 ): Promise<{ output: unknown; durationMs: number; error?: string } | null> {
 	if (!agentRunId) return null;
 
+	const approvedRequestId = toolInput._approvedRequestId as string | undefined;
+	if (approvedRequestId) {
+		const existing = await prisma.permissionRequest.findUnique({
+			where: { id: approvedRequestId },
+		});
+		if (existing?.status === "APPROVED") {
+			return null;
+		}
+		return {
+			output: null,
+			durationMs: 0,
+			error: `Permission request ${approvedRequestId} is not approved (status: ${existing?.status ?? "not found"})`,
+		};
+	}
+
 	const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 	const approvalCode = crypto.randomUUID();
 
@@ -146,54 +162,14 @@ async function requestPermission(
 		},
 	});
 
-	const POLL_INTERVAL_MS = 2000;
-	const MAX_WAIT_MS = 5 * 60 * 1000;
-	const start = Date.now();
-
-	while (Date.now() - start < MAX_WAIT_MS) {
-		await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-
-		const updated = await prisma.permissionRequest.findUnique({
-			where: { id: request.id },
-		});
-
-		if (!updated) {
-			return {
-				output: null,
-				durationMs: Date.now() - start,
-				error: "Permission request not found",
-			};
-		}
-
-		if (updated.status === "APPROVED") {
-			return null; // Proceed with execution
-		}
-
-		if (updated.status === "REJECTED") {
-			return {
-				output: null,
-				durationMs: Date.now() - start,
-				error: `Permission rejected by ${updated.approvedBy ?? "user"}`,
-			};
-		}
-
-		if (updated.status === "EXPIRED" || new Date() >= updated.expiresAt) {
-			await prisma.permissionRequest.updateMany({
-				where: { id: request.id, status: "PENDING" },
-				data: { status: "EXPIRED" },
-			});
-			return {
-				output: null,
-				durationMs: Date.now() - start,
-				error: "Permission request timed out (5 min). Ask the user to approve and try again.",
-			};
-		}
-	}
-
 	return {
-		output: null,
-		durationMs: Date.now() - start,
-		error: "Permission request timed out",
+		output: {
+			_permissionRequired: true,
+			permissionRequestId: request.id,
+			toolName,
+			toolInput,
+		},
+		durationMs: 0,
 	};
 }
 

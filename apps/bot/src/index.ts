@@ -37,6 +37,7 @@ import {
 } from "./cron/index.js";
 import { IntegrationWatcher } from "./integrations/watcher.js";
 import {
+	buildPermissionMessage,
 	createBotFilter,
 	createDeduplicator,
 	createSlackApp,
@@ -272,6 +273,30 @@ async function main(): Promise<void> {
 	registerInteractionHandlers(app, { prisma, logger: createLogger("interactions") });
 
 	await startSlackApp(app);
+
+	if (!config.DANGEROUSLY_SKIP_PERMISSIONS) {
+		const slackClient = app.client;
+		runner.updateApprovalGate({
+			slackPoster: {
+				postMessage: async (channel, threadTs, opts) => {
+					try {
+						const result = await slackClient.chat.postMessage({
+							channel,
+							thread_ts: threadTs,
+							text: opts.text,
+							blocks: opts.blocks as never[],
+						});
+						return result.ts ?? null;
+					} catch (err) {
+						logger.error({ err, channel }, "Failed to post permission message");
+						return null;
+					}
+				},
+			},
+			buildPermissionMessage,
+		});
+		logger.info("Approval gate enabled");
+	}
 
 	const shutdown = async () => {
 		logger.info("Shutting down");

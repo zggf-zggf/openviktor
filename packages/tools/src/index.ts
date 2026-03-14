@@ -35,3 +35,9 @@ export {
 	submitPermissionRequestDefinition,
 	createSubmitPermissionRequestExecutor,
 } from "./permissions/index.js";
+export {
+	type PermissionRequiredOutput,
+	isPermissionRequired,
+	PERMISSION_POLL_INTERVAL_MS,
+	PERMISSION_TIMEOUT_MS,
+} from "./permissions/index.js";
