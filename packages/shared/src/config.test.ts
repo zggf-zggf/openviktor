@@ -7,6 +7,7 @@ const validEnv = {
 	SLACK_SIGNING_SECRET: "test-secret",
 	ANTHROPIC_API_KEY: "sk-ant-test-key",
 	DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+	DASHBOARD_PASSWORD: "test-password",
 	LOG_LEVEL: "info",
 	NODE_ENV: "test",
 };

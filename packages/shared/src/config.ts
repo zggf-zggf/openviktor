@@ -2,10 +2,27 @@ import { z } from "zod";
 
 const envSchema = z
 	.object({
-		// Slack
-		SLACK_BOT_TOKEN: z.string().startsWith("xoxb-"),
-		SLACK_APP_TOKEN: z.string().startsWith("xapp-"),
+		// Deployment
+		DEPLOYMENT_MODE: z.enum(["selfhosted", "managed"]).default("selfhosted"),
+
+		// Slack (conditional per mode)
+		SLACK_BOT_TOKEN: z.string().startsWith("xoxb-").optional(),
+		SLACK_APP_TOKEN: z.string().startsWith("xapp-").optional(),
 		SLACK_SIGNING_SECRET: z.string().min(1),
+
+		// Slack OAuth (managed mode)
+		SLACK_CLIENT_ID: z.string().optional(),
+		SLACK_CLIENT_SECRET: z.string().optional(),
+		SLACK_STATE_SECRET: z.string().optional(),
+		BASE_URL: z.string().url().optional(),
+
+		// Dashboard auth
+		DASHBOARD_AUTH_MODE: z.enum(["basic", "slack-oauth"]).optional(),
+		DASHBOARD_USERNAME: z.string().default("admin"),
+		DASHBOARD_PASSWORD: z.string().optional(),
+
+		// Encryption
+		ENCRYPTION_KEY: z.string().optional(),
 
 		// LLM
 		ANTHROPIC_API_KEY: z.string().min(1),
@@ -64,8 +81,80 @@ const envSchema = z
 			.enum(["true", "false"])
 			.default("false")
 			.transform((v) => v === "true"),
+
+		// Dashboard
+		ENABLE_DASHBOARD: z
+			.enum(["true", "false"])
+			.default("true")
+			.transform((v) => v === "true"),
 	})
 	.superRefine((data, ctx) => {
+		const mode = data.DEPLOYMENT_MODE;
+
+		if (mode === "selfhosted") {
+			if (!data.SLACK_BOT_TOKEN) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "SLACK_BOT_TOKEN is required in selfhosted mode",
+					path: ["SLACK_BOT_TOKEN"],
+				});
+			}
+			if (!data.SLACK_APP_TOKEN) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "SLACK_APP_TOKEN is required in selfhosted mode",
+					path: ["SLACK_APP_TOKEN"],
+				});
+			}
+		}
+
+		if (mode === "managed") {
+			if (!data.SLACK_CLIENT_ID) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "SLACK_CLIENT_ID is required in managed mode",
+					path: ["SLACK_CLIENT_ID"],
+				});
+			}
+			if (!data.SLACK_CLIENT_SECRET) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "SLACK_CLIENT_SECRET is required in managed mode",
+					path: ["SLACK_CLIENT_SECRET"],
+				});
+			}
+			if (!data.SLACK_STATE_SECRET) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "SLACK_STATE_SECRET is required in managed mode",
+					path: ["SLACK_STATE_SECRET"],
+				});
+			}
+			if (!data.BASE_URL) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "BASE_URL is required in managed mode (public URL for Events API)",
+					path: ["BASE_URL"],
+				});
+			}
+			if (!data.ENCRYPTION_KEY) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "ENCRYPTION_KEY is required in managed mode (for encrypting OAuth tokens)",
+					path: ["ENCRYPTION_KEY"],
+				});
+			}
+		}
+
+		const authMode = data.DASHBOARD_AUTH_MODE ?? (mode === "selfhosted" ? "basic" : "slack-oauth");
+		if (authMode === "basic" && !data.DASHBOARD_PASSWORD) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "DASHBOARD_PASSWORD is required when DASHBOARD_AUTH_MODE=basic",
+				path: ["DASHBOARD_PASSWORD"],
+			});
+		}
+
 		if (data.TOOL_BACKEND === "modal" && !data.MODAL_ENDPOINT_URL) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
@@ -73,6 +162,7 @@ const envSchema = z
 				path: ["MODAL_ENDPOINT_URL"],
 			});
 		}
+
 		const pdFields = [
 			data.PIPEDREAM_CLIENT_ID,
 			data.PIPEDREAM_CLIENT_SECRET,
@@ -91,6 +181,8 @@ const envSchema = z
 
 export type EnvConfig = z.infer<typeof envSchema>;
 
+export type DeploymentMode = "selfhosted" | "managed";
+
 let cachedConfig: EnvConfig | null = null;
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): EnvConfig {
@@ -108,4 +200,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
 export function resetConfig(): void {
 	cachedConfig = null;
+}
+
+export function isManaged(config?: EnvConfig): boolean {
+	const cfg = config ?? cachedConfig;
+	if (!cfg) throw new Error("Config not loaded. Call loadConfig() first.");
+	return cfg.DEPLOYMENT_MODE === "managed";
+}
+
+export function isSelfHosted(config?: EnvConfig): boolean {
+	return !isManaged(config);
+}
+
+export function getDashboardAuthMode(config?: EnvConfig): "basic" | "slack-oauth" {
+	const cfg = config ?? cachedConfig;
+	if (!cfg) throw new Error("Config not loaded. Call loadConfig() first.");
+	return (
+		cfg.DASHBOARD_AUTH_MODE ?? (cfg.DEPLOYMENT_MODE === "selfhosted" ? "basic" : "slack-oauth")
+	);
 }

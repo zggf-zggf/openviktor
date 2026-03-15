@@ -10,24 +10,31 @@ generator client {
 // ─── Workspace & Identity ───────────────────────────────
 
 model Workspace {
-  id             String   @id @default(cuid())
-  slackTeamId    String   @unique @map("slack_team_id")
-  slackTeamName  String   @map("slack_team_name")
-  slackBotToken  String   @map("slack_bot_token")
-  slackBotUserId String   @map("slack_bot_user_id")
-  settings       Json     @default("{}")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id                String   @id @default(cuid())
+  slackTeamId       String   @unique @map("slack_team_id")
+  slackTeamName     String   @map("slack_team_name")
+  slackBotToken     String   @map("slack_bot_token")
+  slackBotUserId    String   @map("slack_bot_user_id")
+  slackAppToken     String?  @map("slack_app_token")
+  installedBy       String?  @map("installed_by")
+  oauthAccessToken  String?  @map("oauth_access_token")
+  oauthRefreshToken String?  @map("oauth_refresh_token")
+  isActive          Boolean  @default(true) @map("is_active")
+  settings          Json     @default("{}")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
   members             Member[]
-  agentRuns            AgentRun[]
-  cronJobs             CronJob[]
-  learnings            Learning[]
-  skills               Skill[]
-  threads              Thread[]
-  integrationAccounts  IntegrationAccount[]
-  permissionRequests   PermissionRequest[]
-  toolDefinitions      ToolDefinition[]
+  agentRuns           AgentRun[]
+  cronJobs            CronJob[]
+  learnings           Learning[]
+  skills              Skill[]
+  threads             Thread[]
+  integrationAccounts IntegrationAccount[]
+  permissionRequests  PermissionRequest[]
+  toolDefinitions     ToolDefinition[]
+  subscription        Subscription?
+  usageRecords        UsageRecord[]
 
   @@map("workspaces")
 }
@@ -337,4 +344,40 @@ enum PermissionStatus {
   APPROVED
   REJECTED
   EXPIRED
+}
+
+// ─── Billing & Usage (managed mode) ─────────────────────
+
+model Subscription {
+  id               String    @id @default(cuid())
+  workspaceId      String    @unique @map("workspace_id")
+  stripeCustomerId String    @unique @map("stripe_customer_id")
+  stripeSubId      String    @unique @map("stripe_sub_id")
+  stripePriceId    String    @map("stripe_price_id")
+  status           String    @default("active")
+  tier             String    @default("free")
+  currentPeriodEnd DateTime  @map("current_period_end")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model UsageRecord {
+  id             String   @id @default(cuid())
+  workspaceId    String   @map("workspace_id")
+  date           DateTime @db.Date
+  messageCount   Int      @default(0) @map("message_count")
+  tokenCount     Int      @default(0) @map("token_count")
+  toolExecutions Int      @default(0) @map("tool_executions")
+  llmCostCents   Int      @default(0) @map("llm_cost_cents")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, date])
+  @@index([workspaceId, date])
+  @@map("usage_records")
 }

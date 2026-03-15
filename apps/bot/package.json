@@ -11,7 +11,8 @@
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
-		"clean": "rm -rf dist"
+		"clean": "rm -rf dist",
+		"setup": "bun src/cli/setup.ts"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.78.0",
@@ -20,6 +21,7 @@
 		"@openviktor/shared": "workspace:*",
 		"@openviktor/tools": "workspace:*",
 		"@slack/bolt": "^3.22.0",
+		"@slack/web-api": "6.13.0",
 		"cron-parser": "^5.5.0",
 		"ioredis": "^5.10.0"
 	},

@@ -1,4 +1,13 @@
-export { loadConfig, resetConfig, type EnvConfig } from "./config.js";
+export {
+	loadConfig,
+	resetConfig,
+	isManaged,
+	isSelfHosted,
+	getDashboardAuthMode,
+	type EnvConfig,
+	type DeploymentMode,
+} from "./config.js";
+export { encrypt, decrypt, generateEncryptionKey } from "./crypto.js";
 export { createLogger, logger, type Logger } from "./logger.js";
 export { ThreadPhase } from "./types.js";
 export type {

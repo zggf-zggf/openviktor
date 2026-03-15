@@ -3,7 +3,7 @@ import type { EnvConfig, Logger } from "@openviktor/shared";
 import { App, LogLevel } from "@slack/bolt";
 import type { Logger as SlackLogger } from "@slack/bolt";
 
-function createSlackLoggerAdapter(pinoLogger: Logger): SlackLogger {
+export function createSlackLoggerAdapter(pinoLogger: Logger): SlackLogger {
 	let currentLevel = LogLevel.INFO;
 	return {
 		debug(...msg: unknown[]) {
